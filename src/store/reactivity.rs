@@ -59,12 +59,11 @@ impl Reactivity {
     then in the end of the kv.rs after making changes , call the dispatcher with the key that has changes, and including the event
     */
 
-
     pub async fn dispatch_event(&mut self, key: &str, event: Event) {
         // clone the subscriber list 
         let subs = match self.subscriptions.get(key) {
             Some(list) => list.clone(),
-            None=> return ,
+            None=> return,
         };
 
         let mut dead_ids = Vec::new();

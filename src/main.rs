@@ -1,27 +1,36 @@
 mod store;
-use store::Store;
+
+use crate::store::wal::Wal;
+use crate::store::event::Event;
 use serde_json::json;
 
-fn main() {
-    let mut store = Store::new();
+fn main() -> std::io::Result<()> {
+    // 1. open WAL
+    let mut wal = Wal::open("flux.wal")?;
 
-    store.put("user1".into(), json!({
-        "name": "Vaibhav",
-        "details": {
-            "age": 20,
-            "city": "Delhi"
-        }
-    }));
+    // 2. create a fake event
+    let event = Event {
+        key: "user:1".to_string(),
+        old: json!(null),
+        new: json!({"name": "Alice"}),
+        version: 1,
+    };
 
-    // Update age only
-    store.patch("user1", json!({
-        "details": { "age": 21 }
-    }));
+    // 3. append event
+    wal.append(&event)?;
 
-    if let Some(doc) = store.get("user1") {
-        println!("Value: {}, Version: {}", doc.value, doc.version);
-    }
+    println!("WAL append successful");
 
-    store.delete("user1");
-    println!("After delete: {:?}", store.data);
+    println!("the event is {:?}", event);
+    
+    let events = Wal::replay("flux.wal")?;
+ 
+     println!("Replayed {} events", events.len());
+ 
+     for e in events {
+         println!("{:?}", e);
+     }
+    
+
+    Ok(())
 }
