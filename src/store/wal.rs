@@ -50,7 +50,7 @@ impl Wal {
         */
     }
 
-    pub fn replay<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Event>> {
+    pub fn replay<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Event>> { // TODO shift the replay logic to send stream of events instead of a vecctor because of size constraints and db design schema
         let path = path.as_ref();
 
         // open wal file for reading

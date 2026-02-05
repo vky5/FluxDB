@@ -1,11 +1,12 @@
 use serde_json::Value;
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
 use crate::store::Event;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Document {
-    pub value: Value,
+    pub value: serde_json::Value,
     pub version: u64,
 }
 
