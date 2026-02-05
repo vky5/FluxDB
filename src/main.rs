@@ -1,4 +1,5 @@
 mod store;
+mod db;
 
 use crate::store::wal::Wal;
 use crate::store::event::Event;
