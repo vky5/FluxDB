@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::store::Event;
@@ -50,7 +50,8 @@ impl Wal {
         */
     }
 
-    pub fn replay<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Event>> { // TODO shift the replay logic to send stream of events instead of a vecctor because of size constraints and db design schema
+    pub fn replay<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Event>> {
+        // TODO shift the replay logic to send stream of events instead of a vecctor because of size constraints and db design schema
         let path = path.as_ref();
 
         // open wal file for reading
@@ -74,10 +75,44 @@ impl Wal {
             if file.read_exact(&mut data).is_err() {
                 break; // partial record -> stop safely
             }
-            
-            
+
             let event: Event = serde_json::from_slice(&data).expect("corrupt WAL record");
 
+            events.push(event);
+        }
+
+        Ok(events)
+    }
+
+    pub fn current_offset(&mut self) -> std::io::Result<u64> {
+        // this is not a pure read function it moves the cursor to the offset position that's why self mut
+        self.file.seek(std::io::SeekFrom::End(0)) // to read the length of the fille it uses the end of the tayppe and then delievers the possile length and this movement makes the tape ready for the end
+    }
+
+    pub fn replay_from(&mut self, offset: u64) -> std::io::Result<Vec<Event>> {
+        let mut events: Vec<Event> = Vec::new();
+
+        self.file.seek(SeekFrom::Start(offset))?; // move the cursor to the snapshot boundary
+
+        loop {
+            // read length prefix (4 bytes)
+            let mut len_buf = [0u8; 4];
+
+            // if we cant read 4 bytes -> EOF or partial state -> stop
+            if self.file.read_exact(&mut len_buf).is_err() {
+                break; // not throwing error because earlier records might be useful
+            }
+
+            let len = u32::from_be_bytes(len_buf) as usize;
+
+            // read the payload
+            let mut data = vec![0u8; len];
+            if self.file.read_exact(&mut data).is_err() {
+                break;
+            }
+
+            // Deserialize event
+            let event = serde_json::from_slice(&data).expect("Corrupt wal record");
             events.push(event);
         }
 

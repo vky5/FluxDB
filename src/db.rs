@@ -1,12 +1,12 @@
-use std::{fs::File, io::{self, Write}};
+use std::{fs::{File, rename}, io::{self, Write}};
 
 use serde_json::Value;
 
-use crate::store::{
+use crate::{snapshot::Snapshot, store::{
     event::Event,
     kv::{Document, Store},
-    wal::Wal,
-};
+    wal::{Wal},
+}};
 
 pub struct Database {
     store: Store,
@@ -16,49 +16,106 @@ pub struct Database {
 impl Database {
     // Open DB + replay WAL (recovery)
     pub fn open(path: &str) -> io::Result<Self> {
-        let wal = Wal::open(path)?;
-
+        let mut wal = Wal::open(path)?;
         let mut store = Store::new();
+
+        let snap_path = snapshot_path(&path);
         
         
         // ---- Try loading snapshot -----
-        let snap_path = snapshot_path(path);
-        if let Ok(bytes) = std::fs::read(&snap_path){
-            let data: std::collections::HashMap<String, Document> = serde_json::from_slice(&bytes).expect("snapshot must be valid");
+        let offset = if let Ok(bytes) = std::fs::read(&snap_path) { 
+            let snapshot:Snapshot = bincode::deserialize(&bytes).expect("invalid snapshot");
 
-            store.data = data;
-        }
+            store.data = snapshot.data;
+            snapshot.wal_offset
+        }else{
+            0
+        }; // ultimately returning wal offset and after writing store's data 
 
 
 
         // the next two steps are for recovery logic
         // replay persisted events
-        let events = Wal::replay(path)?; // this restore the event to the previous state of it
+        // ------- recovery of wal suffix only
+        let events = wal.replay_from(offset)?; // this restore the event to the previous state of it
         for event in events {
             store.apply_event(event);
         }
 
-        Ok(Self { store, wal })
+        Ok(Self { store, wal }) // this is a borrow and after that seek end and events writing that moves the seek to the end the cursor is at the end of the file which is fine because we want to write in the end anyway
     }
 
     // storing the latest value of the sotre in the checkpoint
     pub fn checkpoint(
-        &self, 
+        &mut self, 
         wal_path: &str,
     ) -> io::Result<()> {
         let path = snapshot_path(wal_path);
 
-        let bytes = serde_json::to_vec(&self.store.data)
+        let offset = self.wal.current_offset()?;
+
+        let snapshot = Snapshot{
+            data: self.store.data.clone(),
+            wal_offset: offset,
+
+        };
+
+        let bytes = bincode::serialize(&snapshot)
             .expect("snapshot serialization must not fail");
 
         // write snapshot file
         let mut file = File::create(&path)?;
-
         file.write_all(&bytes)?;
 
         file.sync_all()?;
 
         Ok(())
+    }
+
+    pub fn truncate_wal(&mut self, wal_path: &str) -> io::Result<()> { // safe truncation requires knowledge of the global state of db like checkpoint timing that's why it doesnt belong to the wal file
+        // ------ Get snapshot offset -------
+        let snapshot_path = snapshot_path(wal_path);
+
+        let bytes = std::fs::read(&snapshot_path)?;// we are reading not from the struct but because from the file that is already written because that is more durable
+        let snapshot:Snapshot = bincode::deserialize(&bytes).expect("invalid snapshot");
+        let offset = snapshot.wal_offset;
+
+
+        // first get the records after that snapshot (To be written in new wal file)
+        let suffix_events = self.wal.replay_from(offset)?;
+
+        // ------ Craete a tmp file to write new wal ------
+        let tmp_path = format!("{wal_path}.tmp");
+        let mut tmp_file = File::create(&tmp_path)?;
+
+        // record the events that we got from the old wal file after snapshot
+        for event in &suffix_events {
+            // serialize events
+            let bytes = serde_json::to_vec(event).expect("event serialization must not fail");
+
+            let len = bytes.len() as u32; 
+            tmp_file.write_all(&len.to_be_bytes())?;
+            tmp_file.write_all(&bytes)?;
+        }
+        // rename the file and fsync it and also the directory to store the metadata
+
+        tmp_file.sync_all()?;
+        rename(&tmp_path, &wal_path).expect("can not break during renaming");
+
+        // fsync directory for rename durability
+        let dir = std::path::Path::new(wal_path)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+
+        File::open(dir)?.sync_all()?;
+
+        self.wal = Wal::open(wal_path)?;
+
+
+
+
+        Ok(())
+
     }
 
 
