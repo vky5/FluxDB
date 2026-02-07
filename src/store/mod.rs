@@ -4,7 +4,8 @@ pub mod subscriber;
 pub mod reactivity;
 pub mod wal;
 
-pub use kv::Store;
+
+// pub use kv::Store;
 pub use event::Event;
 // pub use subscriber::Subscriber;
 

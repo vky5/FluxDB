@@ -32,8 +32,8 @@ impl Database {
         let snap_path = snapshot_path(&path);
 
         // ---- Try loading snapshot -----
-        let offset = if let Ok(bytes) = std::fs::read(&snap_path) {
-            let snapshot: Snapshot = bincode::deserialize(&bytes).expect("invalid snapshot");
+        let offset: u64 = if let Ok(bytes) = std::fs::read(&snap_path) {
+            let snapshot: Snapshot = serde_json::from_slice(&bytes).expect("invalid snapshot");
 
             store.data = snapshot.data;
             snapshot.wal_offset
@@ -58,8 +58,10 @@ impl Database {
 
     // storing the latest value of the sotre in the checkpoint
     pub fn checkpoint(&mut self, wal_path: &str) -> io::Result<()> {
-        let path = snapshot_path(wal_path);
+        let final_path = snapshot_path(wal_path);
+        let tmp_path = format!("{final_path}.tmp");
 
+        // capture WAL offset + in-memory state
         let offset = self.wal.current_offset()?;
 
         let snapshot = Snapshot {
@@ -67,13 +69,26 @@ impl Database {
             wal_offset: offset,
         };
 
-        let bytes = bincode::serialize(&snapshot).expect("snapshot serialization must not fail");
+        // serialize snapshot
+        let bytes = serde_json::to_vec(&snapshot).expect("snapshot serialization must not fail");
 
-        // write snapshot file
-        let mut file = File::create(&path)?;
-        file.write_all(&bytes)?;
+        // --- 1. write to TEMP file ---
+        let mut tmp_file = File::create(&tmp_path)?;
+        tmp_file.write_all(&bytes)?;
 
-        file.sync_all()?;
+        // --- 2. fsync TEMP file (durability of contents) ---
+        tmp_file.sync_all()?;
+
+        // --- 3. atomic rename TEMP → FINAL ---
+        rename(&tmp_path, &final_path)?;
+
+        // --- 4. fsync DIRECTORY (durability of rename metadata) ---
+        let dir = std::path::Path::new(&final_path)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+
+        File::open(dir)?.sync_all()?;
 
         Ok(())
     }
@@ -84,7 +99,8 @@ impl Database {
         let snapshot_path = snapshot_path(wal_path);
 
         let bytes = std::fs::read(&snapshot_path)?; // we are reading not from the struct but because from the file that is already written because that is more durable
-        let snapshot: Snapshot = bincode::deserialize(&bytes).expect("invalid snapshot");
+        let snapshot: Snapshot = serde_json::from_slice(&bytes).expect("invalid snapshot");
+
         let offset = snapshot.wal_offset;
 
         // first get the records after that snapshot (To be written in new wal file)
