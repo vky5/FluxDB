@@ -120,7 +120,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn subscribe(&mut self, key: &str) -> std::sync::mpsc::Receiver<Event> {
+    pub fn subscribe(&mut self, key: &str) -> mpsc::Receiver<Event> {
         self.reactivity.subscribe(key)
     }
 

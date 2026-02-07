@@ -1,8 +1,11 @@
 use std::collections::HashMap;
-use std::sync::mpsc;
+use tokio::sync::mpsc;
 
 use crate::store::event::Event;
 use crate::store::subscriber::Subscriber;
+
+const SUB_BUFFER: usize = 64;
+
 
 #[derive(Debug)]
 pub struct Reactivity {
@@ -37,7 +40,7 @@ impl Reactivity {
     */
     pub fn subscribe(&mut self, key: &str) -> mpsc::Receiver<Event> {
         // creating a new subcscriber and receiver
-        let (tx, rx) = mpsc::channel(); // std channel has no capicity
+        let (tx, rx) = mpsc::channel(SUB_BUFFER);
 
         let subscriber: Subscriber = Subscriber {
             id: self.next_subscriber_id(),
@@ -65,8 +68,17 @@ impl Reactivity {
 
         if let Some(list) = self.subscriptions.get_mut(key) {
             for sub in list.iter(){
-                if sub.tx.send(event.clone()).is_err(){
-                    dead_ids.push(sub.id);
+                match sub.tx.try_send(event.clone()) {
+                    Ok(_) => {}
+                    
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_))=> {
+                        dead_ids.push(sub.id);
+                    }
+
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_))=> {
+                        // slow subscriber -> evict immediately (backpressure)
+                        dead_ids.push(sub.id);
+                    }
                 }
             }
             // cleanup closed receivers
