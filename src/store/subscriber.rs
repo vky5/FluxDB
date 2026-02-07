@@ -1,4 +1,4 @@
-use tokio::sync::mpsc;
+use std::sync::mpsc;
 
 use crate::store::event::Event;
 
