@@ -1,9 +1,9 @@
 *.wal
+*.wal.snapshot
 /target
 **/*.rs.bk
 
 # Mac OS
 .DS_Store
-
 # Logs
 *.log
