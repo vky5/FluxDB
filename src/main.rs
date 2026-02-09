@@ -1,66 +1,68 @@
 #![allow(dead_code)]
 
+mod command;
 mod db;
 mod snapshot;
 mod store;
 
-use std::io::{self, Write};
+use command::Command;
+use std::io::{self};
+use tokio::sync::{mpsc, oneshot};
+use serde_json::json;
 
 use db::Database;
-fn main() -> std::io::Result<()> {
-    // open the database
-    let mut db = Database::open("flux.wal")?;
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    // create command queue
+    let (tx, mut rx) = mpsc::channel::<Command>(32);
 
-    println!("Simple DB CLI. Commands: PUT key json | GET key | EXIT");
+    // spawn single writer task
+    tokio::spawn(async move {
+        // open DB inside the writer
+        let mut db = Database::open("flux.wal").expect("failed to open database");
 
-    loop {
-        print!(">");
-        io::stdout().flush()?; // show prompt
-        let mut line = String::new();
-        let bytes = io::stdin().read_line(&mut line)?;
-
-        if bytes == 0 {
-            println!("EOF. Exiting.");
-            break;
-        }
-
-        let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
-
-        match parts.as_slice() {
-            ["SET", key, json] => {
-                let value: serde_json::Value = serde_json::from_str(json).expect("invalid JSON");
-
-                db.put((*key).to_string(), value)?;
-                println!("OK");
-            }
-
-            ["GET", key] => match db.get(key) {
-                Some(doc) => println!("{:?}", doc),
-                None => println!("(nil)"),
-            },
-
-            ["DEL", key] => {
-                db.delete(key)?;
-                println!("OK");
-            }
-
-            ["PATCH", key, json] => match serde_json::from_str::<serde_json::Value>(json) {
-                Ok(delta) => {
-                    db.patch(key, delta)?;
-                    println!("OK");
+        // serialized execution loop
+        while let Some(cmd) = rx.recv().await {
+            match cmd {
+                Command::Set { key, value, resp } => {
+                    let result = db.put(key, value).map_err(|e| e.to_string());
+                    let _ = resp.send(result);
                 }
-                Err(_) => println!("Invalid JSON"),
-            },
-            ["CHECKPOINT"] => {
-                db.checkpoint("flux.wal")?;
-                println!("Checkpoint created");
+
+                Command::Get { key, resp } => {
+                    let result = db.get(&key).cloned();
+                    let _ = resp.send(result);
+                }
+
+                Command::Del { key, resp } => {
+                    let result = db.delete(&key).map_err(|e| e.to_string());
+                    let _ = resp.send(result);
+                }
+
+                Command::Patch { key, delta, resp } => {
+                    let result = db.patch(&key, delta).map_err(|e| e.to_string());
+                    let _ = resp.send(result);
+                }
             }
-
-            ["EXIT"] => break,
-
-            _ => println!("Unknown command"),
         }
-    }
+    });
+
+    // create response channel
+    let (resp_tx, resp_rx) = oneshot::channel();
+
+    // send SET command into queue
+    tx.send(Command::Set {
+        key: "x".to_string(),
+        value: json!("red"),
+        resp: resp_tx,
+    })
+    .await
+    .expect("failed to send command");
+
+    // wait for DB response
+    let result = resp_rx.await.expect("writer task dropped");
+
+    println!("SET result: {:?}", result);
 
     Ok(())
 }
