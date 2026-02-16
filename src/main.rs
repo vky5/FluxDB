@@ -6,11 +6,12 @@ mod snapshot;
 mod store;
 
 use command::Command;
-use std::io::{self};
+use serde_json::Value;
+use std::io::{self, Write};
 use tokio::sync::{mpsc, oneshot};
-use serde_json::json;
 
 use db::Database;
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     // create command queue
@@ -47,22 +48,64 @@ async fn main() -> io::Result<()> {
         }
     });
 
-    // create response channel
-    let (resp_tx, resp_rx) = oneshot::channel();
+    // loop to receive commands from the user
+    loop {
+        print!("> ");
+        io::stdout().flush()?;
 
-    // send SET command into queue
-    tx.send(Command::Set {
-        key: "x".to_string(),
-        value: json!("red"),
-        resp: resp_tx,
-    })
-    .await
-    .expect("failed to send command");
+        let mut line = String::new();
+        io::stdin().read_line(&mut line)?;
 
-    // wait for DB response
-    let result = resp_rx.await.expect("writer task dropped");
+        let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
 
-    println!("SET result: {:?}", result);
+        match parts.as_slice() {
+            ["SET", key, json] => {
+                let value: Value = match serde_json::from_str(json) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        println!("Invalid JSON {}", e);
+                        continue;
+                    }
+                };
+
+                let (resp_tx, resp_rx) = oneshot::channel();
+
+                tx.send(Command::Set {
+                    key: key.to_string(),
+                    value,
+                    resp: resp_tx,
+                })
+                .await
+                .expect("Failed to send command");
+
+                match resp_rx.await {
+                    Ok(result) => println!("{:?}", result),
+                    Err(_) => println!("writer dropped"),
+                }
+            }
+
+            ["GET", key] => {
+                let (resp_tx, resp_rx) = oneshot::channel();
+
+                tx.send(Command::Get {
+                    key: key.to_string(),
+                    resp: resp_tx,
+                })
+                .await
+                .expect("Failed to send command");
+
+                match resp_rx.await {
+                    Ok(Some(doc)) => println!("{:?}", doc),
+                    Ok(None) => println!("nil"),
+                    Err(_) => println!("writer dropped"),
+                }
+            }
+
+            ["EXIT"] => break,
+
+            _ => println!("Unknown command"),
+        }
+    }
 
     Ok(())
 }

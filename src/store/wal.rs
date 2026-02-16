@@ -22,19 +22,19 @@ impl Wal {
     }
 
     pub fn append(&mut self, event: &Event) -> std::io::Result<()> {
-        // on success I return nothing special just confiarmation we used stdio in boath of the case for the error type otherwise would be good enough with just result enum
+        // on success I return nothing special just confiarmation we used stdio in both of the case for the error type otherwise would be good enough with just result enum
         // serialize the event
-        let bytes = serde_json::to_vec(event).expect("event serialization must not fail");
+        let bytes = serde_json::to_vec(event).expect("event serialization must not fail"); // convert json to bytes
 
         // write length prefix
-        let len = bytes.len() as u32;
+        let len = bytes.len() as u32; // 4 bytes
         self.file.write_all(&len.to_be_bytes())?; // immutable borrow to write 
 
         //  write payload
         self.file.write_all(&bytes)?; // immutable borrow
 
         // durability barrier
-        self.file.sync_all()?;
+        self.file.sync_all()?; // OS fsync api call
 
         Ok(())
 
@@ -46,13 +46,13 @@ impl Wal {
         after write_all the data is in the program's page and not written in the file
         sync_all dos this is block program until os confirms all previous writes have been flushed to a stable storage disk
 
-        TODO batch multiple writes | fsync once per batch
+        TODO batch multiple writes | fsync once per batch | see about sync_data vs sync_all
         */
     }
 
     pub fn replay<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Event>> {
         // TODO shift the replay logic to send stream of events instead of a vecctor because of size constraints and db design schema
-        let path = path.as_ref();
+        let path: &Path = path.as_ref();
 
         // open wal file for reading
         let mut file = OpenOptions::new().read(true).open(path)?;
@@ -86,7 +86,7 @@ impl Wal {
 
     pub fn current_offset(&mut self) -> std::io::Result<u64> {
         // this is not a pure read function it moves the cursor to the offset position that's why self mut
-        self.file.seek(std::io::SeekFrom::End(0)) // to read the length of the fille it uses the end of the tayppe and then delievers the possile length and this movement makes the tape ready for the end
+        self.file.seek(std::io::SeekFrom::End(0)) // move the pointer position to the end of the tape (file) and see the current position
     }
 
     pub fn replay_from(&mut self, offset: u64) -> std::io::Result<Vec<Event>> {
