@@ -141,38 +141,44 @@ impl Database {
     }
 
     // PRIVATE write pipeline
-    fn execute(&mut self, event: Event) -> io::Result<()> {
+    fn execute_pre_durability(&mut self, event: Event) -> io::Result<Event> {
         // 1. WAL durability
         self.wal.append(&event)?;
+        Ok(event)
+    }
 
+    pub fn execute_post_durability(&mut self, event: Event) -> io::Result<()> {
         // 2. apply to memory
         self.store.apply_event(event.clone());
 
         // 3. dispatch to subscribers
         self.reactivity.dispatch_event(&event);
-
         Ok(())
     }
 
     // Public safe write APIs
-    pub fn put(&mut self, key: String, value: Value) -> io::Result<()> {
+    pub fn put(&mut self, key: String, value: Value) -> io::Result<Event> {
         let event = self.store.put(key, value);
-        self.execute(event)
+        self.execute_pre_durability(event)
     }
 
-    pub fn delete(&mut self, key: &str) -> io::Result<()> {
+    pub fn delete(&mut self, key: &str) -> io::Result<Event> {
         let event = self.store.delete(key);
-        self.execute(event)
+        self.execute_pre_durability(event)
     }
 
-    pub fn patch(&mut self, key: &str, delta: Value) -> io::Result<()> {
+    pub fn patch(&mut self, key: &str, delta: Value) -> io::Result<Event> {
         let event = self.store.patch(key, delta);
-        self.execute(event)
+        self.execute_pre_durability(event)
     }
 
     // Read-only API
     pub fn get(&self, key: &str) -> Option<&Document> {
         self.store.get(key)
+    }
+
+    pub fn fsync_wal(&mut self) -> io::Result<()> {
+        self.wal.fsync()
     }
 }
 

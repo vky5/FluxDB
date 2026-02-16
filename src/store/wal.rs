@@ -31,10 +31,9 @@ impl Wal {
         self.file.write_all(&len.to_be_bytes())?; // immutable borrow to write 
 
         //  write payload
-        self.file.write_all(&bytes)?; // immutable borrow
+        self.file.write_all(&bytes)?; // immutable borrow // writes at OS page cache (RAM) not disk
 
-        // durability barrier
-        self.file.sync_all()?; // OS fsync api call
+        // durability barrier went to another function
 
         Ok(())
 
@@ -48,6 +47,11 @@ impl Wal {
 
         TODO batch multiple writes | fsync once per batch | see about sync_data vs sync_all
         */
+    }
+
+    pub fn fsync(&mut self) -> std::io::Result<()>{
+        // durability barrier
+        self.file.sync_all() // OS fsync api call // flush the OS page cache to disk
     }
 
     pub fn replay<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Event>> {

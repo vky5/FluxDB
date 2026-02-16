@@ -12,6 +12,16 @@ use tokio::sync::{mpsc, oneshot};
 
 use db::Database;
 
+use crate::store::Event;
+
+// Represents a write that has been executed
+// but is waiting for the durability barrier (fsync)
+// before the client can be acknowledged.
+struct PendingWrite {
+    event: Event,
+    resp: oneshot::Sender<Result<(), String>>,
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     // create command queue
@@ -22,27 +32,71 @@ async fn main() -> io::Result<()> {
         // open DB inside the writer
         let mut db = Database::open("flux.wal").expect("failed to open database");
 
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(5));
+        let mut pending: Vec<PendingWrite> = Vec::new();
+
         // serialized execution loop
-        while let Some(cmd) = rx.recv().await {
-            match cmd {
-                Command::Set { key, value, resp } => {
-                    let result = db.put(key, value).map_err(|e| e.to_string());
-                    let _ = resp.send(result);
+        loop {
+            tokio::select! {
+                Some(cmd) = rx.recv() => {
+                    match cmd {
+                        Command::Set { key, value, resp } => match db.put(key, value) {
+                            Ok(event) => {
+                                pending.push(PendingWrite { event, resp });
+                            }
+                            Err(e) => {
+                                let _ = resp.send(Err(e.to_string()));
+                            }
+                        },
+
+                        Command::Get { key, resp } => {
+                            let result = db.get(&key).cloned();
+                            let _ = resp.send(result);
+                        }
+
+                        Command::Del { key, resp } => match db.delete(&key) {
+                            Ok(event) => {
+                                pending.push(PendingWrite { event, resp });
+                            }
+                            Err(e) => {
+                                let _ = resp.send(Err(e.to_string()));
+                            }
+                        },
+
+                        Command::Patch { key, delta, resp } => match db.patch(&key, delta) {
+                            Ok(event) => {
+                                pending.push(PendingWrite { event, resp });
+                            }
+                            Err(e) => {
+                                let _ = resp.send(Err(e.to_string()));
+                            }
+                        },
+                    }
                 }
 
-                Command::Get { key, resp } => {
-                    let result = db.get(&key).cloned();
-                    let _ = resp.send(result);
-                }
+                // ----- fsync batch tick -----
+                _ = tick.tick() => {
+                    if pending.is_empty() {
+                        continue;
+                    }
 
-                Command::Del { key, resp } => {
-                    let result = db.delete(&key).map_err(|e| e.to_string());
-                    let _ = resp.send(result);
-                }
+                    // 1. durability barrier
+                    if let Err(e) = db.fsync_wal() {
+                        // fail ALL pending writes
+                        for p in pending.drain(..) {
+                            let _ = p.resp.send(Err(e.to_string()));
+                        }
+                        continue;
+                    }
 
-                Command::Patch { key, delta, resp } => {
-                    let result = db.patch(&key, delta).map_err(|e| e.to_string());
-                    let _ = resp.send(result);
+                    // 2. apply + notify + ACK
+                    for p in pending.drain(..) {
+                        if let Err(e) = db.execute_post_durability(p.event) {
+                            let _ = p.resp.send(Err(e.to_string()));
+                        } else {
+                            let _ = p.resp.send(Ok(()));
+                        }
+                    }
                 }
             }
         }
