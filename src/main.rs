@@ -1,106 +1,28 @@
 #![allow(dead_code)]
 
-mod command;
-mod db;
-mod snapshot;
+mod engine;
+mod event;
+mod interface;
+mod reactivity;
 mod store;
 
-use command::Command;
+use interface::Command;
 use serde_json::Value;
 use std::io::{self, Write};
 use tokio::sync::{mpsc, oneshot};
 
-use db::Database;
-
-use crate::store::Event;
 
 // Represents a write that has been executed
 // but is waiting for the durability barrier (fsync)
 // before the client can be acknowledged.
-struct PendingWrite {
-    event: Event,
-    resp: oneshot::Sender<Result<(), String>>,
-}
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     // create command queue
-    let (tx, mut rx) = mpsc::channel::<Command>(32);
+    let (tx, rx) = mpsc::channel::<Command>(32);
 
     // spawn single writer task
-    tokio::spawn(async move {
-        // open DB inside the writer
-        let mut db = Database::open("flux.wal").expect("failed to open database");
-
-        let mut tick = tokio::time::interval(std::time::Duration::from_millis(5));
-        let mut pending: Vec<PendingWrite> = Vec::new();
-
-        // serialized execution loop
-        loop {
-            tokio::select! {
-                Some(cmd) = rx.recv() => {
-                    match cmd {
-                        Command::Set { key, value, resp } => match db.put(key, value) {
-                            Ok(event) => {
-                                pending.push(PendingWrite { event, resp });
-                            }
-                            Err(e) => {
-                                let _ = resp.send(Err(e.to_string()));
-                            }
-                        },
-
-                        Command::Get { key, resp } => {
-                            let result = db.get(&key).cloned();
-                            let _ = resp.send(result);
-                        }
-
-                        Command::Del { key, resp } => match db.delete(&key) {
-                            Ok(event) => {
-                                pending.push(PendingWrite { event, resp });
-                            }
-                            Err(e) => {
-                                let _ = resp.send(Err(e.to_string()));
-                            }
-                        },
-
-                        Command::Patch { key, delta, resp } => match db.patch(&key, delta) {
-                            Ok(event) => {
-                                pending.push(PendingWrite { event, resp });
-                            }
-                            Err(e) => {
-                                let _ = resp.send(Err(e.to_string()));
-                            }
-                        },
-                    }
-                }
-
-                // ----- fsync batch tick -----
-                _ = tick.tick() => {
-                    if pending.is_empty() {
-                        continue;
-                    }
-
-                    // 1. durability barrier
-                    if let Err(e) = db.fsync_wal() {
-                        // fail ALL pending writes
-                        for p in pending.drain(..) {
-                            let _ = p.resp.send(Err(e.to_string()));
-                        }
-                        continue;
-                    }
-
-                    // 2. apply + notify + ACK
-                    for p in pending.drain(..) {
-                        if let Err(e) = db.execute_post_durability(p.event) {
-                            let _ = p.resp.send(Err(e.to_string()));
-                        } else {
-                            let _ = p.resp.send(Ok(()));
-                        }
-                    }
-                }
-            }
-        }
-    });
+    tokio::spawn(engine::run_loop::run_single_writer_loop(rx));
 
     // loop to receive commands from the user
     loop {

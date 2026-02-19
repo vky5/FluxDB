@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
-use crate::store::event::Event;
-use crate::store::subscriber::Subscriber;
+use crate::event::Event;
+use crate::reactivity::subscriber::Subscriber;
 
 const SUB_BUFFER: usize = 64;
 

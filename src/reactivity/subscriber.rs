@@ -1,6 +1,6 @@
 use tokio::sync::mpsc;
 
-use crate::store::event::Event;
+use crate::event::Event;
 
 
 #[derive(Debug)]

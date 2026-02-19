@@ -6,15 +6,11 @@ use std::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::{
-    snapshot::Snapshot,
-    store::{
-        event::Event,
-        kv::{Document, Store},
-        reactivity::{self, Reactivity},
-        wal::Wal,
-    },
-};
+use crate::event::Event;
+use crate::store::kv::{Document, Store};
+use crate::store::wal::Wal;
+use crate::store::snapshot::Snapshot;
+use crate::reactivity::reactivity::Reactivity;
 
 pub struct Database {
     store: Store,
@@ -27,7 +23,7 @@ impl Database {
     pub fn open(path: &str) -> io::Result<Self> {
         let mut wal = Wal::open(path)?;
         let mut store = Store::new();
-        let reactivity = reactivity::Reactivity::new();
+        let reactivity = Reactivity::new();
 
         let snap_path = snapshot_path(&path);
 

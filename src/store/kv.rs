@@ -2,7 +2,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
-use crate::store::Event;
+use crate::event::Event;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Document {
