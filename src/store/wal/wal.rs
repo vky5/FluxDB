@@ -49,11 +49,6 @@ impl Wal {
         */
     }
 
-    pub fn fsync(&mut self) -> std::io::Result<()>{
-        // durability barrier
-        self.file.sync_all() // OS fsync api call // flush the OS page cache to disk
-    }
-
     pub fn replay<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Event>> {
         // TODO shift the replay logic to send stream of events instead of a vecctor because of size constraints and db design schema
         let path: &Path = path.as_ref();
