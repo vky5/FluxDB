@@ -1,30 +1,37 @@
-use std::fs::OpenOptions;
-use std::io::{self, Read};
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, SeekFrom};
 use std::io::{Seek, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::event::Event;
 
 pub struct Segment {
-    id: u64,
-    file: std::fs::File,
-    offset: u64,
+    pub id: u64,
+    dir: PathBuf,
+    file: File,
 }
 
 impl Segment {
-    pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        let path = path.as_ref();
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .read(true)
-            .open(path)?;
+    pub fn create<P: AsRef<Path>>(dir: P, id: u64) -> io::Result<Self> {
+        let dir = dir.as_ref().to_path_buf();
+        let path = dir.join(format!("{}.log", id));
 
-        Ok(Self {
-            id: 1,
-            file: file,
-            offset: 1,
-        })
+        let file = OpenOptions::new()
+            .create_new(true) // fail if exists
+            .write(true)
+            .read(true)
+            .open(&path)?;
+
+        Ok(Self { id, dir, file })
+    }
+
+    pub fn open<P: AsRef<Path>>(dir: P, id: u64) -> io::Result<Self> {
+        let dir = dir.as_ref().to_path_buf();
+        let path = dir.join(format!("{}.log", id));
+
+        let file = OpenOptions::new().write(true).read(true).open(&path)?;
+
+        Ok(Self { id, dir, file })
     }
 
     pub fn append(&mut self, event: &Event) -> std::io::Result<u64> {
@@ -32,13 +39,26 @@ impl Segment {
 
         let len = bytes.len() as u32; // store the bytes in u32 number (4 bytes)
 
-        // Capture starting offset (LSN offset part) 
+        self.file.seek(SeekFrom::End(0))?; // making sure pointer is at the nd at the time of appending 
+
+        // Capture starting offset (LSN offset part)
         let start_offset = self.file.stream_position()?;
         self.file.write_all(&len.to_be_bytes())?;
 
         self.file.write_all(&bytes)?; // modifying the page of the file object from segment struct, making it dirty and then flusing it using self.fsync command later
 
         Ok(start_offset)
+
+        /*
+        write_all means keeps on writing bytes until all bytes are written
+        whether write_all appends the file or overwrites it depends oin how the file is opened
+        in our case we opened the file with append therefore it will overwrite the file
+
+        after write_all the data is in the program's page and not written in the file
+        sync_all dos this is block program until os confirms all previous writes have been flushed to a stable storage disk
+
+        TODO batch multiple writes | fsync once per batch | see about sync_data vs sync_all
+        */
     }
 
     pub fn fsync(&mut self) -> io::Result<()> {
@@ -51,7 +71,7 @@ impl Segment {
         self.file.seek(std::io::SeekFrom::Start(offset));
     }
 
-    pub fn size(self) -> std::io::Result<u64> {
+    pub fn size(&self) -> std::io::Result<u64> {
         Ok(self.file.metadata()?.len())
     }
 
