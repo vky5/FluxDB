@@ -38,11 +38,11 @@ impl Wal {
         let mut segment = Segment::open(&self.dir, lsn.segment)?;
 
         // seek to correct offset
-        segment.seek(lsn.offset);
+        segment.seek(lsn.offset)?;
 
         // determine last segment
         let last_segment_id = self.active_segment_id;
-        Ok(WalIterator {
+        Ok(WalIterator { // this returns the iterator. just like in C++ in iterator we call .next() to get next number, in this iterator we will send next event to get the enxt event
             dir: self.dir.clone(),
             current_segment: segment,
             current_segment_id:lsn.segment,

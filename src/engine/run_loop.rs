@@ -1,3 +1,4 @@
+
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
@@ -15,7 +16,7 @@ use crate::interface::Command;
 /// `main` must NOT contain any of this logic.
 pub async fn run_single_writer_loop(mut rx: mpsc::Receiver<Command>) {
     // open DB inside the writer
-    let mut db = Database::open("flux.wal").expect("failed to open database");
+    let mut db = Database::open("./fluxdb").expect("failed to open database");
 
     // fsync batching timer
     let mut tick = interval(Duration::from_millis(5));
@@ -48,6 +49,11 @@ pub async fn run_single_writer_loop(mut rx: mpsc::Receiver<Command>) {
                         Ok(event) => pending.push(PendingWrite { event, resp }),
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
                     },
+
+                    Command::Snapshot {resp} => match db.checkpoint("flux.wal"){
+                        Ok(_) => { let _ = resp.send(Ok(())); }
+                        Err(e) => { let _ = resp.send(Err(e.to_string())); }
+                    }
                 }
             }
 

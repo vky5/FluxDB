@@ -1,4 +1,6 @@
 pub mod wal;
-mod lsn;
+pub mod lsn;
 mod segment;
 pub mod replay;
+
+pub use wal::Wal;

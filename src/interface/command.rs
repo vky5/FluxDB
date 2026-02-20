@@ -25,4 +25,8 @@ pub enum Command {
         delta: Value,
         resp: oneshot::Sender<Result<(), String>>,
     },
+
+    Snapshot {
+        resp: oneshot::Sender<Result<(), String>>,
+    },
 }

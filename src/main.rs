@@ -77,6 +77,19 @@ async fn main() -> io::Result<()> {
                 }
             }
 
+            ["SNAPSHOT"] => {
+                let (resp_tx, resp_rx) = oneshot::channel();
+
+                tx.send(Command::Snapshot { resp: resp_tx })
+                    .await
+                    .expect("Failed to send command");
+
+                match resp_rx.await {
+                    Ok(result) => println!("{:?}", result),
+                    Err(_) => println!("writer dropped"),
+                }
+            }
+
             ["EXIT"] => break,
 
             _ => println!("Unknown command"),

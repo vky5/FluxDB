@@ -67,8 +67,9 @@ impl Segment {
     }
 
     // move the pointer of the file to the end
-    pub fn seek(&mut self, offset: u64) {
-        self.file.seek(std::io::SeekFrom::Start(offset));
+    pub fn seek(&mut self, offset: u64) -> std::io::Result<()> {
+        self.file.seek(std::io::SeekFrom::Start(offset))?;
+        Ok(())
     }
 
     pub fn size(&self) -> std::io::Result<u64> {

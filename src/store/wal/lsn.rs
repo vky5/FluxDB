@@ -1,4 +1,6 @@
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lsn {
     pub segment: u64,
     pub offset: u64,
