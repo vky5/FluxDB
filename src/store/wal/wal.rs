@@ -40,7 +40,7 @@ impl Wal {
         }
 
         segment_ids.sort_unstable(); // sort but doenst maintain the order of equal thingiys // use less memory and is faster 
-        let active_segment_id ;
+        let active_segment_id;
         let next_segment_id;
 
         let active_segment;
@@ -49,7 +49,6 @@ impl Wal {
             active_segment_id = 0;
             next_segment_id = 1;
             active_segment = seg;
-            
         } else {
             let id = *segment_ids.last().unwrap();
             let seg = Segment::open(&dir, id)?;
@@ -57,7 +56,6 @@ impl Wal {
             next_segment_id = id + 1;
             active_segment = seg;
         }
-
 
         Ok(Self {
             dir,
@@ -109,5 +107,21 @@ impl Wal {
             segment: self.active_segment_id,
             offset,
         })
+    }
+
+    pub fn gc(&mut self, upto: Lsn) -> io::Result<()> {
+        // delete all segments with id < upto.segment
+        for segment_id in 0..upto.segment {
+            if segment_id >= self.active_segment_id {
+                continue;
+            }
+
+            let path = self.dir.join(format!("{}.log", segment_id));
+            if path.exists() {
+                std::fs::remove_file(path)?;
+            }
+        }
+
+        Ok(())
     }
 }

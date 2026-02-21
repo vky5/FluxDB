@@ -16,6 +16,8 @@ pub struct Database {
     store: Store,
     wal: Wal,
     reactivity: Reactivity,
+    write_since_checkpoint: u64,
+    threshold_since_checkpoint: u64, // the number of writes after which checkpoint should be triggered, this is a simple heuristic and can be improved by considering the size of the wal or the time since last checkpoint etc
 }
 
 impl Database {
@@ -45,6 +47,8 @@ impl Database {
             store,
             wal,
             reactivity,
+            write_since_checkpoint: 0,
+            threshold_since_checkpoint: 1000,
         }) // this is a borrow and after that seek end and events writing that moves the seek to the end the cursor is at the end of the file which is fine because we want to write in the end anyway
     }
 
@@ -81,6 +85,8 @@ impl Database {
 
         File::open(dir)?.sync_all()?;
 
+        self.wal.gc(lsn)?;
+
         Ok(())
     }
 
@@ -101,6 +107,12 @@ impl Database {
 
         // 3. dispatch to subscribers
         self.reactivity.dispatch_event(&event);
+
+        self.write_since_checkpoint+=1;
+        if self.write_since_checkpoint >= self.threshold_since_checkpoint {
+            self.checkpoint("flux.wal")?;
+            self.write_since_checkpoint = 0;
+        }
         Ok(())
     }
 
