@@ -9,8 +9,9 @@ mod store;
 use interface::Command;
 use serde_json::Value;
 use std::io::{self, Write};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
+use crate::engine::handler::HandlerEnum;
 
 // Represents a write that has been executed
 // but is waiting for the durability barrier (fsync)
@@ -23,6 +24,7 @@ async fn main() -> io::Result<()> {
 
     // spawn single writer task
     tokio::spawn(engine::run_loop::run_single_writer_loop(rx));
+    let handler = HandlerEnum::new(tx);
 
     // loop to receive commands from the user
     loop {
@@ -44,50 +46,33 @@ async fn main() -> io::Result<()> {
                     }
                 };
 
-                let (resp_tx, resp_rx) = oneshot::channel();
-
-                tx.send(Command::Set {
-                    key: key.to_string(),
-                    value,
-                    resp: resp_tx,
-                })
-                .await
-                .expect("Failed to send command");
-
-                match resp_rx.await {
-                    Ok(result) => println!("{:?}", result),
-                    Err(_) => println!("writer dropped"),
-                }
+                println!("{:?}", handler.set(key.to_string(), value).await);
             }
 
-            ["GET", key] => {
-                let (resp_tx, resp_rx) = oneshot::channel();
+            ["GET", key] => match handler.get(key.to_string()).await {
+                Ok(Some(doc)) => println!("{:?}", doc),
+                Ok(None) => println!("nil"),
+                Err(e) => println!("{}", e),
+            },
 
-                tx.send(Command::Get {
-                    key: key.to_string(),
-                    resp: resp_tx,
-                })
-                .await
-                .expect("Failed to send command");
+            ["DEL", key] => {
+                println!("{:?}", handler.delete(key.to_string()).await);
+            }
 
-                match resp_rx.await {
-                    Ok(Some(doc)) => println!("{:?}", doc),
-                    Ok(None) => println!("nil"),
-                    Err(_) => println!("writer dropped"),
-                }
+            ["PATCH", key, json] => {
+                let delta: Value = match serde_json::from_str(json) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        println!("Invalid JSON {}", e);
+                        continue;
+                    }
+                };
+
+                println!("{:?}", handler.patch(key.to_string(), delta).await);
             }
 
             ["SNAPSHOT"] => {
-                let (resp_tx, resp_rx) = oneshot::channel();
-
-                tx.send(Command::Snapshot { resp: resp_tx })
-                    .await
-                    .expect("Failed to send command");
-
-                match resp_rx.await {
-                    Ok(result) => println!("{:?}", result),
-                    Err(_) => println!("writer dropped"),
-                }
+                println!("{:?}", handler.snapshot().await);
             }
 
             ["EXIT"] => break,
@@ -98,5 +83,3 @@ async fn main() -> io::Result<()> {
 
     Ok(())
 }
-
-
