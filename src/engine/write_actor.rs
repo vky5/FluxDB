@@ -1,10 +1,12 @@
+use std::sync::Arc;
 
-use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::sync::{RwLock, mpsc};
+use tokio::time::{Duration, interval};
 
 use crate::engine::db::Database;
 use crate::engine::pending::PendingWrite;
-use crate::interface::Command;
+use crate::interface::command::WriteCommand;
+use crate::store::kv::Store;
 
 /// Runs the single-writer database actor loop.
 ///
@@ -14,9 +16,12 @@ use crate::interface::Command;
 /// - post-durability apply + notify + ACK
 ///
 /// `main` must NOT contain any of this logic.
-pub async fn run_single_writer_loop(mut rx: mpsc::Receiver<Command>) {
+/// Single write loop
+pub async fn write_actor(mut rx: mpsc::Receiver<WriteCommand>, shared_store: Arc<RwLock<Store>>) {
     // open DB inside the writer
-    let mut db = Database::open("./fluxdb").expect("failed to open database");
+    let mut db = Database::open("./fluxdb", shared_store)
+        .await
+        .expect("failed to open database");
 
     // fsync batching timer
     let mut tick = interval(Duration::from_millis(5));
@@ -27,30 +32,25 @@ pub async fn run_single_writer_loop(mut rx: mpsc::Receiver<Command>) {
     // serialized execution loop (database actor)
     loop {
         tokio::select! {
-            // -------- receive command --------
+            // -------- receive WriteCommand --------
             Some(cmd) = rx.recv() => {
                 match cmd {
-                    Command::Set { key, value, resp } => match db.put(key, value) {
+                    WriteCommand::Set { key, value, resp } => match db.put(key, value).await {
                         Ok(event) => pending.push(PendingWrite { event, resp }),
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
                     },
 
-                    Command::Get { key, resp } => {
-                        let result = db.get(&key).cloned();
-                        let _ = resp.send(result);
-                    }
-
-                    Command::Del { key, resp } => match db.delete(&key) {
+                    WriteCommand::Del { key, resp } => match db.delete(&key).await {
                         Ok(event) => pending.push(PendingWrite { event, resp }),
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
                     },
 
-                    Command::Patch { key, delta, resp } => match db.patch(&key, delta) {
+                    WriteCommand::Patch { key, delta, resp } => match db.patch(&key, delta).await {
                         Ok(event) => pending.push(PendingWrite { event, resp }),
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
                     },
 
-                    Command::Snapshot {resp} => match db.checkpoint("flux.wal"){
+                    WriteCommand::Snapshot {resp} => match db.checkpoint("flux.wal").await{
                         Ok(_) => { let _ = resp.send(Ok(())); }
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
                     }
@@ -74,7 +74,7 @@ pub async fn run_single_writer_loop(mut rx: mpsc::Receiver<Command>) {
 
                 // 2. apply + notify + ACK
                 for p in pending.drain(..) {
-                    if let Err(e) = db.execute_post_durability(p.event) {
+                    if let Err(e) = db.execute_post_durability(p.event).await {
                         let _ = p.resp.send(Err(e.to_string()));
                     } else {
                         let _ = p.resp.send(Ok(()));

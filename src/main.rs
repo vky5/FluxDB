@@ -6,12 +6,8 @@ mod interface;
 mod reactivity;
 mod store;
 
-use interface::Command;
 use serde_json::Value;
 use std::io::{self, Write};
-use tokio::sync::mpsc;
-
-use crate::engine::handler::HandlerEnum;
 
 // Represents a write that has been executed
 // but is waiting for the durability barrier (fsync)
@@ -19,13 +15,8 @@ use crate::engine::handler::HandlerEnum;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    // create command queue
-    let (tx, rx) = mpsc::channel::<Command>(32);
-
-    // spawn single writer task
-    tokio::spawn(engine::run_loop::run_single_writer_loop(rx));
-    let handler = HandlerEnum::new(tx);
-
+    let runtime = engine::runtime::EngineRuntime::start();
+    let handler = runtime.handle;
     // loop to receive commands from the user
     loop {
         print!("> ");

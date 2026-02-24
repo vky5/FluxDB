@@ -30,3 +30,30 @@ pub enum Command {
         resp: oneshot::Sender<Result<(), String>>,
     },
 }
+
+pub enum ReadCommand {
+    Get {
+        key: String,
+        resp: oneshot::Sender<Option<Document>>,
+    },
+}
+
+pub enum WriteCommand {
+    Set {
+        key: String,
+        value: Value,
+        resp: oneshot::Sender<Result<(), String>>,
+    },
+    Del {
+        key: String,
+        resp: oneshot::Sender<Result<(), String>>,
+    },
+    Patch {
+        key: String,
+        delta: Value,
+        resp: oneshot::Sender<Result<(), String>>,
+    },
+    Snapshot {
+        resp: oneshot::Sender<Result<(), String>>,
+    },
+}

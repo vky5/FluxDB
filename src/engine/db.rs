@@ -1,10 +1,11 @@
 use std::{
     fs::{File, rename},
     io::{self, Write},
+    sync::Arc,
 };
 
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{RwLock, mpsc};
 
 use crate::reactivity::reactivity::Reactivity;
 use crate::store::kv::{Document, Store};
@@ -13,7 +14,7 @@ use crate::store::wal::Wal;
 use crate::{event::Event, store::wal::lsn::Lsn};
 
 pub struct Database {
-    store: Store,
+    store: Arc<RwLock<Store>>,
     wal: Wal,
     reactivity: Reactivity,
     write_since_checkpoint: u64,
@@ -22,17 +23,19 @@ pub struct Database {
 
 impl Database {
     // Open DB + replay WAL (recovery)
-    pub fn open(path: &str) -> io::Result<Self> {
+    pub async fn open(path: &str, store: Arc<RwLock<Store>>) -> io::Result<Self> {
         let wal = Wal::open(path, 64 * 1024 * 1024)?;
-        let mut store = Store::new();
         let reactivity = Reactivity::new();
 
         let snap_path = snapshot_path(&path);
 
+        let mut guard = store.write().await; // taking exclusive write lock
+        *guard = Store::new(); // replacing the entire guard value
+
         let start_lsn = if let Ok(bytes) = std::fs::read(&snap_path) {
             let snapshot: Snapshot = serde_json::from_slice(&bytes).expect("invalid snapshot");
 
-            store.data = snapshot.data;
+            guard.data = snapshot.data;
             snapshot.lsn
         } else {
             Lsn::ZERO
@@ -40,8 +43,10 @@ impl Database {
 
         let mut iter = wal.replay_from(start_lsn)?;
         while let Some(event) = iter.next_event()? {
-            store.apply_event(event);
+            guard.apply_event(event);
         }
+
+        drop(guard); // usually the lock is realased automatically when the scope ends but can use exclusively 
 
         Ok(Self {
             store,
@@ -53,16 +58,20 @@ impl Database {
     }
 
     // storing the latest value of the sotre in the checkpoint
-    pub fn checkpoint(&mut self, wal_path: &str) -> io::Result<()> {
+    pub async fn checkpoint(&mut self, wal_path: &str) -> io::Result<()> {
         let final_path = snapshot_path(wal_path);
         let tmp_path = format!("{final_path}.tmp");
 
         let lsn = self.wal.current_lsn()?;
 
+        let guard = self.store.read().await;
+
         let snapshot = Snapshot {
-            data: self.store.data.clone(),
+            data: guard.data.clone(),
             lsn,
         };
+
+        drop(guard);
 
         // serialize snapshot
         let bytes = serde_json::to_vec(&snapshot).expect("snapshot serialization must not fail");
@@ -101,40 +110,50 @@ impl Database {
         Ok(event)
     }
 
-    pub fn execute_post_durability(&mut self, event: Event) -> io::Result<()> {
-        // 2. apply to memory
-        self.store.apply_event(event.clone());
+    pub async fn execute_post_durability(&mut self, event: Event) -> io::Result<()> {
+        // 2. apply to memory (shared store)
+        {
+            let mut guard = self.store.write().await;
+            guard.apply_event(event.clone());
+        } // write lock released here
 
         // 3. dispatch to subscribers
         self.reactivity.dispatch_event(&event);
 
-        self.write_since_checkpoint+=1;
+        self.write_since_checkpoint += 1;
         if self.write_since_checkpoint >= self.threshold_since_checkpoint {
-            self.checkpoint("flux.wal")?;
+            self.checkpoint("flux.wal").await?;
             self.write_since_checkpoint = 0;
         }
         Ok(())
     }
 
     // Public safe write APIs
-    pub fn put(&mut self, key: String, value: Value) -> io::Result<Event> {
-        let event = self.store.put(key, value);
+    pub async fn put(&mut self, key: String, value: Value) -> io::Result<Event> {
+        let mut guard = self.store.write().await;
+        let event = guard.put(key, value);
+        drop(guard);
         self.execute_pre_durability(event)
     }
 
-    pub fn delete(&mut self, key: &str) -> io::Result<Event> {
-        let event = self.store.delete(key);
+    pub async fn delete(&mut self, key: &str) -> io::Result<Event> {
+        let mut guard = self.store.write().await;
+        let event = guard.delete(key);
+        drop(guard);
         self.execute_pre_durability(event)
     }
 
-    pub fn patch(&mut self, key: &str, delta: Value) -> io::Result<Event> {
-        let event = self.store.patch(key, delta);
+    pub async fn patch(&mut self, key: &str, delta: Value) -> io::Result<Event> {
+        let mut guard = self.store.write().await;
+        let event = guard.patch(key, delta);
+        drop(guard);
         self.execute_pre_durability(event)
     }
 
     // Read-only API
-    pub fn get(&self, key: &str) -> Option<&Document> {
-        self.store.get(key)
+    pub async fn get(&self, key: &str) -> Option<Document> {
+        let guard = self.store.read().await;
+        guard.get(key).cloned()
     }
 
     pub fn fsync_wal(&mut self) -> io::Result<()> {
@@ -145,19 +164,3 @@ impl Database {
 fn snapshot_path(wal_path: &str) -> String {
     format!("{wal_path}.snapshot")
 }
-
-/*
-this architecture is called Log Structured storage with checkpointing
-
-for now we are replaying entire wal file even after recovering from snapshot but later we will
-
-and trhis recovery method is called redo only recovery with checpoints
-
-and why it is called redo only because we implementing the replay logic entirely in here
-
-
-? why wal is still replayed after snapshot
-- Snapshot covers state up to LSN (Last Sequenece Number)
-- Snapshot implicitly represents a prefix of the log
-
-*/

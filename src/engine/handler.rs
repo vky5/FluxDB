@@ -1,22 +1,28 @@
 use tokio::sync::mpsc;
 
-use crate::{interface::Command, store::kv::Document};
+use crate::{
+    interface::{
+        command::{ReadCommand, WriteCommand},
+    },
+    store::kv::Document,
+};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-pub struct HandlerEnum {
-    tx: mpsc::Sender<Command>,
+pub struct EngineHandle {
+    read_tx: mpsc::Sender<ReadCommand>,
+    write_tx: mpsc::Sender<WriteCommand>,
 }
 
-impl HandlerEnum {
-    pub fn new(tx: mpsc::Sender<Command>) -> Self {
-        Self { tx }
+impl EngineHandle {
+    pub fn new(read_tx: mpsc::Sender<ReadCommand>, write_tx: mpsc::Sender<WriteCommand>) -> Self {
+        Self { read_tx, write_tx }
     }
 
     pub async fn set(&self, key: String, value: Value) -> Result<(), String> {
         let (resp_tx, resp_rx) = oneshot::channel();
-        self.tx
-            .send(Command::Set {
+        self.write_tx
+            .send(WriteCommand::Set {
                 key,
                 value,
                 resp: resp_tx,
@@ -28,8 +34,8 @@ impl HandlerEnum {
 
     pub async fn patch(&self, key: String, delta: Value) -> Result<(), String> {
         let (resp_tx, resp_rx) = oneshot::channel();
-        self.tx
-            .send(Command::Patch {
+        self.write_tx
+            .send(WriteCommand::Patch {
                 key,
                 delta,
                 resp: resp_tx,
@@ -42,8 +48,8 @@ impl HandlerEnum {
 
     pub async fn delete(&self, key: String) -> Result<(), String> {
         let (resp_tx, resp_rx) = oneshot::channel();
-        self.tx
-            .send(Command::Del { key, resp: resp_tx })
+        self.write_tx
+            .send(WriteCommand::Del { key, resp: resp_tx })
             .await
             .map_err(|_| "writer dropped".to_string())?;
 
@@ -52,8 +58,8 @@ impl HandlerEnum {
 
     pub async fn get(&self, key: String) -> Result<Option<Document>, String> {
         let (resp_tx, resp_rx) = oneshot::channel();
-        self.tx
-            .send(Command::Get { key, resp: resp_tx })
+        self.read_tx
+            .send(ReadCommand::Get { key, resp: resp_tx })
             .await
             .map_err(|_| "writer dropped".to_string())?;
 
@@ -62,8 +68,8 @@ impl HandlerEnum {
 
     pub async fn snapshot(&self) -> Result<(), String> {
         let (resp_tx, resp_rx) = oneshot::channel();
-        self.tx
-            .send(Command::Snapshot { resp: resp_tx })
+        self.write_tx
+            .send(WriteCommand::Snapshot { resp: resp_tx })
             .await
             .map_err(|_| "writer dropped".to_string())?;
         resp_rx.await.map_err(|_| "writer dropped".to_string())?
