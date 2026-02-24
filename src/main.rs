@@ -1,8 +1,5 @@
+#[allow(dead_code)]
 use fluxdb::engine;
-use fluxdb::event;
-use fluxdb::interface;
-use fluxdb::reactivity;
-use fluxdb::store;
 
 use serde_json::Value;
 use std::io::{self, Write};
@@ -22,7 +19,7 @@ async fn main() -> io::Result<()> {
         let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
 
         match parts.as_slice() {
-            ["SET", key, json] => {
+            ["set", key, json] => {
                 let value: Value = match serde_json::from_str(json) {
                     Ok(v) => v,
                     Err(e) => {
@@ -34,17 +31,17 @@ async fn main() -> io::Result<()> {
                 println!("{:?}", handler.set(key.to_string(), value).await);
             }
 
-            ["GET", key] => match handler.get(key.to_string()).await {
+            ["get", key] => match handler.get(key.to_string()).await {
                 Ok(Some(doc)) => println!("{:?}", doc),
                 Ok(None) => println!("nil"),
                 Err(e) => println!("{}", e),
             },
 
-            ["DEL", key] => {
+            ["del", key] => {
                 println!("{:?}", handler.delete(key.to_string()).await);
             }
 
-            ["PATCH", key, json] => {
+            ["patch", key, json] => {
                 let delta: Value = match serde_json::from_str(json) {
                     Ok(v) => v,
                     Err(e) => {
@@ -56,7 +53,7 @@ async fn main() -> io::Result<()> {
                 println!("{:?}", handler.patch(key.to_string(), delta).await);
             }
 
-            ["SNAPSHOT"] => {
+            ["snapshot"] => {
                 println!("{:?}", handler.snapshot().await);
             }
 

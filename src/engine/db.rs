@@ -8,7 +8,7 @@ use serde_json::Value;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::reactivity::reactivity::Reactivity;
-use crate::store::kv::{Document, Store};
+use crate::store::kv::Store;
 use crate::store::snapshot::Snapshot;
 use crate::store::wal::Wal;
 use crate::{event::Event, store::wal::lsn::Lsn};
@@ -130,30 +130,24 @@ impl Database {
 
     // Public safe write APIs
     pub async fn put(&mut self, key: String, value: Value) -> io::Result<Event> {
-        let mut guard = self.store.write().await;
+        let guard = self.store.read().await;
         let event = guard.put(key, value);
         drop(guard);
         self.execute_pre_durability(event)
     }
 
     pub async fn delete(&mut self, key: &str) -> io::Result<Event> {
-        let mut guard = self.store.write().await;
+        let guard = self.store.read().await;
         let event = guard.delete(key);
         drop(guard);
         self.execute_pre_durability(event)
     }
 
     pub async fn patch(&mut self, key: &str, delta: Value) -> io::Result<Event> {
-        let mut guard = self.store.write().await;
+        let guard = self.store.read().await;
         let event = guard.patch(key, delta);
         drop(guard);
         self.execute_pre_durability(event)
-    }
-
-    // Read-only API
-    pub async fn get(&self, key: &str) -> Option<Document> {
-        let guard = self.store.read().await;
-        guard.get(key).cloned()
     }
 
     pub fn fsync_wal(&mut self) -> io::Result<()> {

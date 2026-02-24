@@ -46,7 +46,7 @@ impl Store {
      *WAL file and then it will be applid in the memory by apply_event
      */
 
-    pub fn put(&mut self, key: String, value: Value) -> Event {
+    pub fn put(&self, key: String, value: Value) -> Event {
         let (previous_state, version) = self.previous_state_info(&key);
 
         let new_version = version;
@@ -63,7 +63,7 @@ impl Store {
         self.data.get(key)
     }
 
-    pub fn delete(&mut self, key: &str) -> Event {
+    pub fn delete(&self, key: &str) -> Event {
         let (previous_state, version) = self.previous_state_info(&key);
         Event {
             key: key.to_string(),
@@ -73,7 +73,7 @@ impl Store {
         }
     }
 
-    pub fn patch(&mut self, key: &str, delta: Value) -> Event {
+    pub fn patch(&self, key: &str, delta: Value) -> Event {
         let (previous_state, version) = self.previous_state_info(&key);
 
         // create merged value without mutating store
