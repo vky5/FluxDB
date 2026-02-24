@@ -18,7 +18,8 @@ pub struct Database {
     wal: Wal,
     reactivity: Reactivity,
     write_since_checkpoint: u64,
-    threshold_since_checkpoint: u64, // the number of writes after which checkpoint should be triggered, this is a simple heuristic and can be improved by considering the size of the wal or the time since last checkpoint etc
+    threshold_since_checkpoint: u64, 
+    pub fail_next_fsync: bool,
 }
 
 impl Database {
@@ -54,7 +55,8 @@ impl Database {
             reactivity,
             write_since_checkpoint: 0,
             threshold_since_checkpoint: 1000,
-        }) // this is a borrow and after that seek end and events writing that moves the seek to the end the cursor is at the end of the file which is fine because we want to write in the end anyway
+            fail_next_fsync: false,
+        }) 
     }
 
     // storing the latest value of the sotre in the checkpoint
@@ -151,6 +153,10 @@ impl Database {
     }
 
     pub fn fsync_wal(&mut self) -> io::Result<()> {
+        if self.fail_next_fsync {
+            self.fail_next_fsync = false;
+            return Err(io::Error::new(io::ErrorKind::Other, "injected fsync failure"));
+        }
         self.wal.active_segment.fsync()
     }
 }

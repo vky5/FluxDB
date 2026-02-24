@@ -56,4 +56,7 @@ pub enum WriteCommand {
     Snapshot {
         resp: oneshot::Sender<Result<(), String>>,
     },
+    InjectFailure {
+        resp: oneshot::Sender<()>,
+    },
 }

@@ -53,6 +53,10 @@ pub async fn write_actor(mut rx: mpsc::Receiver<WriteCommand>, shared_store: Arc
                     WriteCommand::Snapshot {resp} => match db.checkpoint("flux.wal").await{
                         Ok(_) => { let _ = resp.send(Ok(())); }
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
+                    },
+                    WriteCommand::InjectFailure { resp } => {
+                        db.fail_next_fsync = true;
+                        let _ = resp.send(());
                     }
                 }
             }

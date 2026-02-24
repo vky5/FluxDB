@@ -75,4 +75,10 @@ impl EngineHandle {
             .map_err(|_| "writer dropped".to_string())?;
         resp_rx.await.map_err(|_| "writer dropped".to_string())?
     }
+
+    pub async fn inject_failure(&self) {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        let _ = self.write_tx.send(WriteCommand::InjectFailure { resp: resp_tx }).await;
+        let _ = resp_rx.await;
+    }
 }
