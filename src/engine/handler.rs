@@ -9,6 +9,7 @@ use crate::{
 use serde_json::Value;
 use tokio::sync::oneshot;
 
+#[derive(Clone)]
 pub struct EngineHandle {
     read_tx: mpsc::Sender<ReadCommand>,
     write_tx: mpsc::Sender<WriteCommand>,

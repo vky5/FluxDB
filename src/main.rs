@@ -1,17 +1,11 @@
-#![allow(dead_code)]
-
-mod engine;
-mod event;
-mod interface;
-mod reactivity;
-mod store;
+use fluxdb::engine;
+use fluxdb::event;
+use fluxdb::interface;
+use fluxdb::reactivity;
+use fluxdb::store;
 
 use serde_json::Value;
 use std::io::{self, Write};
-
-// Represents a write that has been executed
-// but is waiting for the durability barrier (fsync)
-// before the client can be acknowledged.
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
