@@ -1,9 +1,7 @@
 use tokio::sync::mpsc;
 
 use crate::{
-    engine::snapshot_actor::SnapshotActorCommand,
-    interface::command::{ReadCommand, WriteCommand},
-    store::kv::Document,
+    engine::{notify_actor::NotifyCommand, snapshot_actor::SnapshotActorCommand}, event::Event, interface::command::{ReadCommand, WriteCommand}, store::kv::Document
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -13,6 +11,7 @@ pub struct EngineHandle {
     read_tx: mpsc::Sender<ReadCommand>,
     write_tx: mpsc::Sender<WriteCommand>,
     snap_tx: mpsc::Sender<SnapshotActorCommand>,
+    notify_tx: mpsc::Sender<NotifyCommand>,
 }
 
 impl EngineHandle {
@@ -20,11 +19,13 @@ impl EngineHandle {
         read_tx: mpsc::Sender<ReadCommand>,
         write_tx: mpsc::Sender<WriteCommand>,
         snap_tx: mpsc::Sender<SnapshotActorCommand>,
+        notify_tx: mpsc::Sender<NotifyCommand>,
     ) -> Self {
         Self {
             read_tx,
             write_tx,
             snap_tx,
+            notify_tx,
         }
     }
 
@@ -78,10 +79,23 @@ impl EngineHandle {
     pub async fn snapshot(&self) -> Result<(), String> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.snap_tx
-            .send(SnapshotActorCommand::TriggerNowWithAck { resp:resp_tx })
+            .send(SnapshotActorCommand::TriggerNowWithAck { resp: resp_tx })
             .await
             .map_err(|_| "writer dropped".to_string())?;
         resp_rx.await.map_err(|_| "writer dropped".to_string())?
+    }
+
+    pub async fn subscribe(&self, key: String) -> Result<mpsc::Receiver<Event>, String> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+
+        self.notify_tx
+            .send(NotifyCommand::Subscribe { key, resp: resp_tx })
+            .await
+            .map_err(|_| "notify actor dropped".to_string())?;
+
+        resp_rx
+            .await
+            .map_err(|_| "notify actor dropped".to_string())
     }
 
     pub async fn inject_failure(&self) {

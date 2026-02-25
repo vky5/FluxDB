@@ -5,6 +5,7 @@ use tokio::sync::{RwLock, mpsc};
 use crate::{
     engine::{
         handler::EngineHandle,
+        notify_actor::{NotifyActor, NotifyCommand},
         read_actor::read_actor,
         snapshot_actor::{SnapshotActorCommand, snapshot_actor},
         write_actor::write_actor,
@@ -19,14 +20,22 @@ pub struct EngineRuntime {
 
 impl EngineRuntime {
     pub fn start() -> Self {
+        // initializing all channels
         let (read_tx, read_rx) = mpsc::channel::<ReadCommand>(32);
         let (write_tx, write_rx) = mpsc::channel::<WriteCommand>(32); // channel for writing and updating, is generally slower.
         let (snap_tx, snap_rx) = mpsc::channel::<SnapshotActorCommand>(32);
+        let (notify_tx, notify_rx) = mpsc::channel::<NotifyCommand>(32);
 
         let shared_store = Arc::new(RwLock::new(Store::new()));
 
+        // spawning all tasks
         tokio::spawn(read_actor(read_rx, shared_store.clone())); // cloned the pointer 
-        tokio::spawn(write_actor(write_rx, shared_store, snap_tx.clone())); // moved the ownership of shared_store 
+        tokio::spawn(write_actor(
+            write_rx,
+            shared_store,
+            snap_tx.clone(),
+            notify_tx.clone(),
+        )); // moved the ownership of shared_store 
         tokio::spawn(snapshot_actor(
             snap_rx,
             write_tx.clone(),
@@ -34,8 +43,12 @@ impl EngineRuntime {
         ));
 
         // in the end both pointing to same thing
+        let handle = EngineHandle::new(read_tx, write_tx, snap_tx, notify_tx);
 
-        let handle = EngineHandle::new(read_tx, write_tx, snap_tx);
+        // creating reactivity task
+        let notify = NotifyActor::new(notify_rx);
+        tokio::spawn(notify.run());
+
 
         Self { handle }
     }

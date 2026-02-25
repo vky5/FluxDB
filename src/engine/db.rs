@@ -1,13 +1,11 @@
 use std::{
-    fs::{File, rename},
-    io::{self, Write},
+    io::{self},
     sync::Arc,
 };
 
 use serde_json::Value;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::RwLock;
 
-use crate::reactivity::reactivity::Reactivity;
 use crate::store::kv::Store;
 use crate::store::snapshot::Snapshot;
 use crate::store::wal::Wal;
@@ -16,7 +14,6 @@ use crate::{event::Event, store::wal::lsn::Lsn};
 pub struct Database {
     store: Arc<RwLock<Store>>,
     wal: Wal,
-    reactivity: Reactivity,
     pub fail_next_fsync: bool,
 }
 
@@ -24,7 +21,6 @@ impl Database {
     // Open DB + replay WAL (recovery)
     pub async fn open(path: &str, store: Arc<RwLock<Store>>) -> io::Result<Self> {
         let wal = Wal::open(path, 64 * 1024 * 1024)?;
-        let reactivity = Reactivity::new();
 
         let snap_path = snapshot_path(&path);
 
@@ -50,7 +46,6 @@ impl Database {
         Ok(Self {
             store,
             wal,
-            reactivity,
             fail_next_fsync: false,
         })
     }
@@ -70,45 +65,6 @@ impl Database {
         Ok(snapshot)
     }
 
-    pub async fn checkpoint_durable(
-        &mut self,
-        wal_path: &str,
-        snapshot: Snapshot,
-    ) -> io::Result<()> {
-        let final_path = snapshot_path(wal_path);
-        let tmp_path = format!("{final_path}.tmp");
-
-        // serialize snapshot
-        let bytes = serde_json::to_vec(&snapshot).expect("snapshot serialization must not fail");
-
-        // 1) write temp file
-        let mut tmp_file = File::create(&tmp_path)?;
-        tmp_file.write_all(&bytes)?;
-
-        // 2) fsync temp file
-        tmp_file.sync_all()?;
-
-        // 3) atomic rename temp -> final
-        rename(&tmp_path, &final_path)?;
-
-        // 4) fsync directory metadata (rename durability)
-        let dir = std::path::Path::new(&final_path)
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(std::path::Path::new("."));
-
-        File::open(dir)?.sync_all()?;
-
-        // 5) WAL GC after snapshot is durable
-        self.wal.gc(snapshot.lsn)?;
-
-        Ok(())
-    }
-
-    pub fn subscribe(&mut self, key: &str) -> mpsc::Receiver<Event> {
-        self.reactivity.subscribe(key)
-    }
-
     // PRIVATE write pipeline
     fn execute_pre_durability(&mut self, event: Event) -> io::Result<Event> {
         // 1. WAL durability
@@ -122,9 +78,6 @@ impl Database {
             let mut guard = self.store.write().await;
             guard.apply_event(event.clone());
         } // write lock released here
-
-        // 3. dispatch to subscribers
-        self.reactivity.dispatch_event(&event);
         Ok(())
     }
 

@@ -1,6 +1,6 @@
 use fluxdb::engine::runtime::EngineRuntime;
 use serde_json::json;
-use std::time::{Instant, Duration};
+use std::time::Instant;
 
 #[tokio::test]
 async fn test_durability_batching_order() {
@@ -19,7 +19,7 @@ async fn test_durability_batching_order() {
     );
 
     let elapsed = start.elapsed();
-    
+
     r1.unwrap();
     r2.unwrap();
     r3.unwrap();

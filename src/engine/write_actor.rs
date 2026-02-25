@@ -4,6 +4,7 @@ use tokio::sync::{RwLock, mpsc};
 use tokio::time::{Duration, interval};
 
 use crate::engine::db::Database;
+use crate::engine::notify_actor::NotifyCommand;
 use crate::engine::pending::PendingWrite;
 use crate::engine::snapshot_actor::SnapshotActorCommand;
 use crate::interface::command::WriteCommand;
@@ -22,6 +23,7 @@ pub async fn write_actor(
     mut rx: mpsc::Receiver<WriteCommand>,
     shared_store: Arc<RwLock<Store>>,
     snap_tx: mpsc::Sender<SnapshotActorCommand>,
+    notify_tx: mpsc::Sender<NotifyCommand>,
 ) {
     // open DB inside the writer
     let mut db = Database::open("./fluxdb", shared_store)
@@ -85,10 +87,14 @@ pub async fn write_actor(
 
                 // 2. apply + notify + ACK
                 for p in pending.drain(..) {
+
+                    let event = p.event.clone();
                     if let Err(e) = db.execute_post_durability(p.event).await {
                         let _ = p.resp.send(Err(e.to_string()));
+
                     } else {
-                        let _ = p.resp.send(Ok(())); // successfully wrote the event to disk
+                        let _ = p.resp.send(Ok(()));
+                        let _ = notify_tx.send(NotifyCommand::Dispatch { event }).await;
 
                         // trigger snapshot automatically after 1000 successful batch fsync
                         writes_since_snapshot+=1;
