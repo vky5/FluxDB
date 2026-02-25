@@ -5,6 +5,7 @@ use tokio::time::{Duration, interval};
 
 use crate::engine::db::Database;
 use crate::engine::pending::PendingWrite;
+use crate::engine::snapshot_actor::SnapshotActorCommand;
 use crate::interface::command::WriteCommand;
 use crate::store::kv::Store;
 
@@ -17,7 +18,11 @@ use crate::store::kv::Store;
 ///
 /// `main` must NOT contain any of this logic.
 /// Single write loop
-pub async fn write_actor(mut rx: mpsc::Receiver<WriteCommand>, shared_store: Arc<RwLock<Store>>) {
+pub async fn write_actor(
+    mut rx: mpsc::Receiver<WriteCommand>,
+    shared_store: Arc<RwLock<Store>>,
+    snap_tx: mpsc::Sender<SnapshotActorCommand>,
+) {
     // open DB inside the writer
     let mut db = Database::open("./fluxdb", shared_store)
         .await
@@ -29,6 +34,9 @@ pub async fn write_actor(mut rx: mpsc::Receiver<WriteCommand>, shared_store: Arc
     // pending writes waiting for durability barrier
     let mut pending: Vec<PendingWrite> = Vec::new();
 
+    let mut writes_since_snapshot: u64 = 0;
+    const SNAPSHOT_EVERY: u64 = 1000;
+
     // serialized execution loop (database actor)
     loop {
         tokio::select! {
@@ -39,7 +47,6 @@ pub async fn write_actor(mut rx: mpsc::Receiver<WriteCommand>, shared_store: Arc
                         Ok(event) => pending.push(PendingWrite { event, resp }),
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
                     },
-
                     WriteCommand::Del { key, resp } => match db.delete(&key).await {
                         Ok(event) => pending.push(PendingWrite { event, resp }),
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
@@ -50,8 +57,8 @@ pub async fn write_actor(mut rx: mpsc::Receiver<WriteCommand>, shared_store: Arc
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
                     },
 
-                    WriteCommand::Snapshot {resp} => match db.checkpoint("flux.wal").await{
-                        Ok(_) => { let _ = resp.send(Ok(())); }
+                    WriteCommand::Snapshot {resp} => match db.checkpoint_payload().await{
+                        Ok(snapshot) => { let _ = resp.send(Ok(snapshot)); }
                         Err(e) => { let _ = resp.send(Err(e.to_string())); }
                     },
                     WriteCommand::InjectFailure { resp } => {
@@ -81,7 +88,17 @@ pub async fn write_actor(mut rx: mpsc::Receiver<WriteCommand>, shared_store: Arc
                     if let Err(e) = db.execute_post_durability(p.event).await {
                         let _ = p.resp.send(Err(e.to_string()));
                     } else {
-                        let _ = p.resp.send(Ok(()));
+                        let _ = p.resp.send(Ok(())); // successfully wrote the event to disk
+
+                        // trigger snapshot automatically after 1000 successful batch fsync
+                        writes_since_snapshot+=1;
+
+                        if writes_since_snapshot>=SNAPSHOT_EVERY {
+                            let _ = snap_tx.send(SnapshotActorCommand::TriggerNow).await;
+                            writes_since_snapshot = 0;
+                        }
+
+
                     }
                 }
             }

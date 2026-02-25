@@ -17,8 +17,6 @@ pub struct Database {
     store: Arc<RwLock<Store>>,
     wal: Wal,
     reactivity: Reactivity,
-    write_since_checkpoint: u64,
-    threshold_since_checkpoint: u64, 
     pub fail_next_fsync: bool,
 }
 
@@ -53,17 +51,12 @@ impl Database {
             store,
             wal,
             reactivity,
-            write_since_checkpoint: 0,
-            threshold_since_checkpoint: 1000,
             fail_next_fsync: false,
-        }) 
+        })
     }
 
     // storing the latest value of the sotre in the checkpoint
-    pub async fn checkpoint(&mut self, wal_path: &str) -> io::Result<()> {
-        let final_path = snapshot_path(wal_path);
-        let tmp_path = format!("{final_path}.tmp");
-
+    pub async fn checkpoint_payload(&mut self) -> io::Result<Snapshot> {
         let lsn = self.wal.current_lsn()?;
 
         let guard = self.store.read().await;
@@ -74,21 +67,31 @@ impl Database {
         };
 
         drop(guard);
+        Ok(snapshot)
+    }
+
+    pub async fn checkpoint_durable(
+        &mut self,
+        wal_path: &str,
+        snapshot: Snapshot,
+    ) -> io::Result<()> {
+        let final_path = snapshot_path(wal_path);
+        let tmp_path = format!("{final_path}.tmp");
 
         // serialize snapshot
         let bytes = serde_json::to_vec(&snapshot).expect("snapshot serialization must not fail");
 
-        // --- 1. write to TEMP file ---
+        // 1) write temp file
         let mut tmp_file = File::create(&tmp_path)?;
         tmp_file.write_all(&bytes)?;
 
-        // --- 2. fsync TEMP file (durability of contents) ---
+        // 2) fsync temp file
         tmp_file.sync_all()?;
 
-        // --- 3. atomic rename TEMP → FINAL ---
+        // 3) atomic rename temp -> final
         rename(&tmp_path, &final_path)?;
 
-        // --- 4. fsync DIRECTORY (durability of rename metadata) ---
+        // 4) fsync directory metadata (rename durability)
         let dir = std::path::Path::new(&final_path)
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -96,7 +99,8 @@ impl Database {
 
         File::open(dir)?.sync_all()?;
 
-        self.wal.gc(lsn)?;
+        // 5) WAL GC after snapshot is durable
+        self.wal.gc(snapshot.lsn)?;
 
         Ok(())
     }
@@ -121,12 +125,6 @@ impl Database {
 
         // 3. dispatch to subscribers
         self.reactivity.dispatch_event(&event);
-
-        self.write_since_checkpoint += 1;
-        if self.write_since_checkpoint >= self.threshold_since_checkpoint {
-            self.checkpoint("flux.wal").await?;
-            self.write_since_checkpoint = 0;
-        }
         Ok(())
     }
 
@@ -155,7 +153,10 @@ impl Database {
     pub fn fsync_wal(&mut self) -> io::Result<()> {
         if self.fail_next_fsync {
             self.fail_next_fsync = false;
-            return Err(io::Error::new(io::ErrorKind::Other, "injected fsync failure"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "injected fsync failure",
+            ));
         }
         self.wal.active_segment.fsync()
     }
