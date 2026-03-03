@@ -6,7 +6,7 @@ use tokio::{
 
 use fluxdb::net::protocol::{Request, Response};
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug)] // Parser -converts command line arguments into this struct
 #[command(author, version, about = "FluxDB TCP client")]
 struct Cli {
     #[arg(long, default_value = "127.0.0.1:7000")]
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Command::Subscribe { .. } => {
-            let mut line = String::new();
+            let mut line: String = String::new();
             loop {
                 line.clear();
                 let n = reader.read_line(&mut line).await?;
@@ -66,6 +66,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+
+// maps the subcommands to their respective requests based on protocol.rs file
 fn build_request(command: &Command) -> Result<Request, Box<dyn std::error::Error>> {
     let req = match command {
         Command::Set { key, value } => Request::Set {

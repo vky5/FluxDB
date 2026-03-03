@@ -25,3 +25,18 @@ pub enum Response {
     Event { event: Event },
     Error { message: String },
 }
+
+
+/*
+{
+  "kind": "set",
+  "key": "a",
+  "value": 1
+} 
+
+instead of this 
+
+{ "Set": { "key": "a", "value": 1 } }
+
+and this is the contract between client and server.rs  the official communication protocol between the two 
+*/
