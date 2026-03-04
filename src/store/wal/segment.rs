@@ -1,20 +1,18 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, SeekFrom};
 use std::io::{Seek, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::event::Event;
 
 pub struct Segment {
     pub id: u64,
-    dir: PathBuf,
     file: File,
 }
 
 impl Segment {
     pub fn create<P: AsRef<Path>>(dir: P, id: u64) -> io::Result<Self> {
-        let dir = dir.as_ref().to_path_buf();
-        let path = dir.join(format!("{}.log", id));
+        let path = dir.as_ref().join(format!("{}.log", id));
 
         let file = OpenOptions::new()
             .create_new(true) // fail if exists
@@ -22,16 +20,15 @@ impl Segment {
             .read(true)
             .open(&path)?;
 
-        Ok(Self { id, dir, file })
+        Ok(Self { id, file })
     }
 
     pub fn open<P: AsRef<Path>>(dir: P, id: u64) -> io::Result<Self> {
-        let dir = dir.as_ref().to_path_buf();
-        let path = dir.join(format!("{}.log", id));
+        let path = dir.as_ref().join(format!("{}.log", id));
 
         let file = OpenOptions::new().write(true).read(true).open(&path)?;
 
-        Ok(Self { id, dir, file })
+        Ok(Self { id, file })
     }
 
     pub fn append(&mut self, event: &Event) -> std::io::Result<u64> {
