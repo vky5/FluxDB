@@ -47,6 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn run_once(addr: &str, command: &Command) -> Result<(), Box<dyn std::error::Error>> {
     let req = build_request(command)?;
     let stream = TcpStream::connect(addr).await?;
+    stream.set_nodelay(true)?;
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
@@ -84,6 +85,7 @@ async fn run_once(addr: &str, command: &Command) -> Result<(), Box<dyn std::erro
 
 async fn run_shell(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     let stream = TcpStream::connect(addr).await?;
+    stream.set_nodelay(true)?;
     let (read_half, mut write_half) = stream.into_split();
     let mut socket_reader = BufReader::new(read_half);
 

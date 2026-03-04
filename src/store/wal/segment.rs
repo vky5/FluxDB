@@ -102,8 +102,13 @@ impl Segment {
         }
 
         // ---- 3. Deserialize into Event ----
-        let event: Event = serde_json::from_slice(&data)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "corrupt WAL record"))?;
+        let event: Event = match serde_json::from_slice(&data) {
+            Ok(event) => event,
+            Err(e) => {
+                eprintln!("Warning: corrupt or torn WAL record at end: {}. Stopping replay.", e);
+                return Ok(None);
+            }
+        };
 
         // Cursor already advanced by read_exact
         Ok(Some(event))

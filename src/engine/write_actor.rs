@@ -41,73 +41,84 @@ pub async fn write_actor(
 
     // serialized execution loop (database actor)
     loop {
+        // 1. Wait for at least one command OR a tick
         tokio::select! {
-            // -------- receive WriteCommand --------
-            Some(cmd) = rx.recv() => {
-                match cmd {
-                    WriteCommand::Set { key, value, resp } => match db.put(key, value).await {
-                        Ok(event) => pending.push(PendingWrite { event, resp }),
-                        Err(e) => { let _ = resp.send(Err(e.to_string())); }
-                    },
-                    WriteCommand::Del { key, resp } => match db.delete(&key).await {
-                        Ok(event) => pending.push(PendingWrite { event, resp }),
-                        Err(e) => { let _ = resp.send(Err(e.to_string())); }
-                    },
-
-                    WriteCommand::Patch { key, delta, resp } => match db.patch(&key, delta).await {
-                        Ok(event) => pending.push(PendingWrite { event, resp }),
-                        Err(e) => { let _ = resp.send(Err(e.to_string())); }
-                    },
-
-                    WriteCommand::Snapshot {resp} => match db.checkpoint_payload().await{
-                        Ok(snapshot) => { let _ = resp.send(Ok(snapshot)); }
-                        Err(e) => { let _ = resp.send(Err(e.to_string())); }
-                    },
-                    WriteCommand::InjectFailure { resp } => {
-                        db.fail_next_fsync = true;
-                        let _ = resp.send(());
-                    }
+            res = rx.recv() => {
+                match res {
+                    Some(cmd) => handle_write_command(&mut db, &mut pending, cmd).await,
+                    None => break, // Channel closed, exit actor
                 }
             }
-
-            // -------- fsync batch boundary --------
             _ = tick.tick() => {
-                if pending.is_empty() {
-                    continue;
-                }
+                // tick is just a heartbeat for idle writes
+            }
+        }
 
-                // 1. durability barrier
-                if let Err(e) = db.fsync_wal() {
-                    // fail ALL pending writes
-                    for p in pending.drain(..) {
-                        let _ = p.resp.send(Err(e.to_string()));
-                    }
-                    continue;
-                }
+        // 2. Opportunistically drain all currently available commands
+        while let Ok(cmd) = rx.try_recv() {
+            handle_write_command(&mut db, &mut pending, cmd).await;
+        }
 
-                // 2. apply + notify + ACK
+        // 3. If we have pending writes, fsync immediately
+        if !pending.is_empty() {
+            // durability barrier
+            if let Err(e) = db.fsync_wal() {
                 for p in pending.drain(..) {
+                    let _ = p.resp.send(Err(e.to_string()));
+                }
+                continue;
+            }
 
-                    let event = p.event.clone();
-                    if let Err(e) = db.execute_post_durability(p.event).await {
-                        let _ = p.resp.send(Err(e.to_string()));
-
-                    } else {
-                        let _ = p.resp.send(Ok(()));
-                        let _ = notify_tx.send(NotifyCommand::Dispatch { event }).await;
-
-                        // trigger snapshot automatically after 1000 successful batch fsync
-                        writes_since_snapshot+=1;
-
-                        if writes_since_snapshot>=SNAPSHOT_EVERY {
-                            let _ = snap_tx.send(SnapshotActorCommand::TriggerNow).await;
-                            writes_since_snapshot = 0;
-                        }
-
-
+            // apply + notify + ACK
+            for p in pending.drain(..) {
+                let event = p.event.clone();
+                if let Err(e) = db.execute_post_durability(p.event).await {
+                    let _ = p.resp.send(Err(e.to_string()));
+                } else {
+                    let _ = p.resp.send(Ok(()));
+                    let _ = notify_tx.send(NotifyCommand::Dispatch { event }).await;
+                    writes_since_snapshot += 1;
+                    if writes_since_snapshot >= SNAPSHOT_EVERY {
+                        let _ = snap_tx.send(SnapshotActorCommand::TriggerNow).await;
+                        writes_since_snapshot = 0;
                     }
                 }
             }
+        }
+    }
+}
+
+async fn handle_write_command(db: &mut Database, pending: &mut Vec<PendingWrite>, cmd: WriteCommand) {
+    match cmd {
+        WriteCommand::Set { key, value, resp } => match db.put(key, value).await {
+            Ok(event) => pending.push(PendingWrite { event, resp }),
+            Err(e) => {
+                let _ = resp.send(Err(e.to_string()));
+            }
+        },
+        WriteCommand::Del { key, resp } => match db.delete(&key).await {
+            Ok(event) => pending.push(PendingWrite { event, resp }),
+            Err(e) => {
+                let _ = resp.send(Err(e.to_string()));
+            }
+        },
+        WriteCommand::Patch { key, delta, resp } => match db.patch(&key, delta).await {
+            Ok(event) => pending.push(PendingWrite { event, resp }),
+            Err(e) => {
+                let _ = resp.send(Err(e.to_string()));
+            }
+        },
+        WriteCommand::Snapshot { resp } => match db.checkpoint_payload().await {
+            Ok(snapshot) => {
+                let _ = resp.send(Ok(snapshot));
+            }
+            Err(e) => {
+                let _ = resp.send(Err(e.to_string()));
+            }
+        },
+        WriteCommand::InjectFailure { resp } => {
+            db.fail_next_fsync = true;
+            let _ = resp.send(());
         }
     }
 }

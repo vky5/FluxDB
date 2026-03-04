@@ -23,6 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         let (stream, addr) = listener.accept().await?;
+        stream.set_nodelay(true)?; // Disable Nagle's algorithm for lower latency
         let handle = handle.clone();
 
         tokio::spawn(async move {
@@ -59,21 +60,17 @@ async fn handle_connection(
 
     let writer_task = tokio::spawn(async move { // moved the ownership of mut write_half to this task 
         while let Some(resp) = out_rx.recv().await {
-            let line = match serde_json::to_string(&resp) { // covnert the rust enum to json string {"kind":"ok"}
-                Ok(s) => s,
+            let mut line_bytes = match serde_json::to_vec(&resp) {
+                Ok(b) => b,
                 Err(e) => {
                     eprintln!("response serialization failed: {e}");
                     break;
                 }
             };
+            line_bytes.push(b'\n');
 
-            // write_half - sending bytes over the network to the specific client (each client has its own tcp stream and they don't mangle it up)
-
-            if write_half.write_all(line.as_bytes()).await.is_err() { // becaue client only understands bytes so converting to bytes is important
+            if write_half.write_all(&line_bytes).await.is_err() { 
                 break;
-            }
-            if write_half.write_all(b"\n").await.is_err() { // the \n is for client to tell which is the next line 
-                break; // in case something bad happened
             }
         }
     });

@@ -1,4 +1,4 @@
-mod db;
+pub mod db;
 mod pending; // TOOD check if we really need this or we can skip this 
 mod write_actor;
 mod read_actor;
