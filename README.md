@@ -198,6 +198,17 @@ Gracefully terminates the CLI.
 
 FluxDB performance metrics for in-process and network operations.
 
+### Benchmark Environment
+
+To provide "serious engineer" level evidence, here are the technical parameters of these tests:
+
+- **Hardware**: AMD Ryzen 5 5600H (6 Cores, 12 Threads) @ 3.30GHz
+- **RAM**: 16GB
+- **Storage Medium**: NVMe SSD
+- **Durability**: `fsync` enabled (enforced after every write batch)
+- **Write Batching**: Opportunistic draining + 5ms heartbeat interval
+- **Payload Size**: ~50 bytes per document (`{"id": i, "data": "benchmark data"}`)
+
 ## In-Process Benchmarks
 
 Results obtained using `cargo run --bin bench -- --writes 10000 --reads 10000 --concurrency 100`:
