@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -147,7 +147,7 @@ async fn run_shell(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     println!("shell connected to {addr}");
-    println!("paste raw Request JSON lines, type 'exit' to quit");
+    println!("commands: set/get/del/patch/snapshot/subscribe, type 'exit' to quit");
 
     let stdin = tokio::io::stdin();
     let mut stdin_reader = BufReader::new(stdin);
@@ -155,6 +155,9 @@ async fn run_shell(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         // Interactive shell loop.
+        print!("> ");
+        std::io::stdout().flush()?;
+
         input.clear();
         let n = stdin_reader.read_line(&mut input).await?;
         if n == 0 {
@@ -169,10 +172,10 @@ async fn run_shell(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        let _req: Request = match serde_json::from_str(trimmed) {
+        let req: Request = match parse_shell_request(trimmed) {
             Ok(r) => r,
             Err(e) => {
-                println!("invalid request json: {e}");
+                println!("{e}");
                 continue;
             }
         };
@@ -188,8 +191,9 @@ async fn run_shell(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
             *slot = Some(tx);
         }
 
-        // Send raw JSON request line as typed.
-        write_half.write_all(trimmed.as_bytes()).await?;
+        // Convert shell command to wire request JSON.
+        let line = serde_json::to_string(&req)?;
+        write_half.write_all(line.as_bytes()).await?;
         write_half.write_all(b"\n").await?;
 
         // Wait until socket-reader routes the matching non-event response.
@@ -226,4 +230,83 @@ fn build_request(command: &Command) -> Result<Request, Box<dyn std::error::Error
     };
 
     Ok(req)
+}
+
+fn parse_shell_request(input: &str) -> Result<Request, String> {
+    let mut parts = input.splitn(2, ' ');
+    let cmd = parts
+        .next()
+        .map(|s| s.to_ascii_lowercase())
+        .ok_or_else(|| "empty command".to_string())?;
+    let rest = parts.next().unwrap_or("").trim();
+
+    match cmd.as_str() {
+        "set" => {
+            let mut p = rest.splitn(2, ' ');
+            let key = p
+                .next()
+                .filter(|k| !k.is_empty())
+                .ok_or_else(|| "usage: set <key> <json_value>".to_string())?;
+            let value_str = p.next().unwrap_or("").trim();
+            if value_str.is_empty() {
+                return Err("usage: set <key> <json_value>".to_string());
+            }
+            let value = serde_json::from_str(value_str)
+                .map_err(|e| format!("invalid JSON value for set: {e}"))?;
+            Ok(Request::Set {
+                key: key.to_string(),
+                value,
+            })
+        }
+        "get" => {
+            if rest.is_empty() {
+                return Err("usage: get <key>".to_string());
+            }
+            Ok(Request::Get {
+                key: rest.to_string(),
+            })
+        }
+        "del" => {
+            if rest.is_empty() {
+                return Err("usage: del <key>".to_string());
+            }
+            Ok(Request::Del {
+                key: rest.to_string(),
+            })
+        }
+        "patch" => {
+            let mut p = rest.splitn(2, ' ');
+            let key = p
+                .next()
+                .filter(|k| !k.is_empty())
+                .ok_or_else(|| "usage: patch <key> <json_delta>".to_string())?;
+            let delta_str = p.next().unwrap_or("").trim();
+            if delta_str.is_empty() {
+                return Err("usage: patch <key> <json_delta>".to_string());
+            }
+            let delta = serde_json::from_str(delta_str)
+                .map_err(|e| format!("invalid JSON delta for patch: {e}"))?;
+            Ok(Request::Patch {
+                key: key.to_string(),
+                delta,
+            })
+        }
+        "snapshot" => {
+            if !rest.is_empty() {
+                return Err("usage: snapshot".to_string());
+            }
+            Ok(Request::Snapshot)
+        }
+        "subscribe" => {
+            if rest.is_empty() {
+                return Err("usage: subscribe <key>".to_string());
+            }
+            Ok(Request::Subscribe {
+                key: rest.to_string(),
+            })
+        }
+        _ => Err(
+            "unknown command. use: set/get/del/patch/snapshot/subscribe/exit".to_string(),
+        ),
+    }
 }

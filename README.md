@@ -1,59 +1,74 @@
-# FluxDB — Stage 1
+# FluxDB
 
-**FluxDB Stage-1** is a **single-node, durable, reactive key-value store** designed to teach and validate the **core invariants of real storage engines** before moving to concurrency and distributed consensus.
-
-This stage focuses purely on:
-
-* **correctness**
-* **durability**
-* **deterministic recovery**
-* **bounded reactivity**
-
-Not performance.
-Not networking.
-Not distribution.
+FluxDB is a single-node, durable, reactive key-value store designed to ensure core invariants of storage engines. It provides strong guarantees for correctness, durability, and deterministic recovery.
 
 ---
 
-# What Stage-1 Achieves
+# Architecture
 
-Stage-1 delivers a **fully crash-safe local database core** with:
+FluxDB uses an actor-based architecture to manage concurrency and ensure data consistency.
+
+```mermaid
+graph TD
+    User[User / CLI] --- Server[TCP Server]
+    Server --- EngineHandle[EngineHandle]
+    EngineHandle -->|WriteCommand| WriteActor[Write Actor]
+    EngineHandle -->|ReadCommand| ReadActor[Read Actor]
+    EngineHandle -->|NotifyCommand| NotifyActor[Notify Actor]
+    EngineHandle -->|SnapshotCommand| SnapshotActor[Snapshot Actor]
+
+    subgraph "Core Engine"
+        WriteActor -->|Owns| DB[Database]
+        DB -->|Append| WAL[WAL File]
+        DB -->|Update| Store[In-Memory Store]
+        ReadActor -->|Query| Store
+        SnapshotActor -->|Trigger| WriteActor
+        WriteActor -->|Checkpoint| DB
+        DB -->|Save| Snapshot[Snapshot File]
+        WriteActor -->|Dispatch| NotifyActor
+        NotifyActor -->|Events| Subscribers[Subscribers]
+    end
+```
+
+---
+
+# Core Features
+
+FluxDB delivers a crash-safe local database core with:
 
 ### Durability
 
-* Write-Ahead Log (WAL)
-* `fsync` before visibility
-* Redo-only crash recovery
+- Write-Ahead Log (WAL)
+- fsync before visibility
+- Redo-only crash recovery
 
 ### Persistence Acceleration
 
-* Atomic snapshot creation
-* WAL truncation after checkpoint
-* Deterministic restart state
+- Atomic snapshot creation
+- WAL truncation after checkpoint
+- Deterministic restart state
 
 ### Reactive System
 
-* Key-level subscriptions
-* Event dispatch on mutation
-* Bounded channels with slow-subscriber eviction
+- Key-level subscriptions
+- Event dispatch on mutation
+- Bounded channels with slow-subscriber eviction
 
 ### Correctness Invariants
 
-* WAL-before-memory visibility
-* Deterministic replay
-* Silent recovery (no historical event emission)
-* Bounded memory under slow consumers
-
-These are **real database guarantees**, not demo features.
+- WAL-before-memory visibility
+- Deterministic replay
+- Silent recovery (no historical event emission)
+- Bounded memory under slow consumers
 
 ---
 
 # Data Model
 
-FluxDB stores:
+FluxDB stores JSON documents with logical versions.
 
 ```
-key → JSON document + version
+key -> JSON document + version
 ```
 
 ### Document Structure
@@ -65,17 +80,13 @@ key → JSON document + version
 }
 ```
 
-Versioning is:
-
-* **per-key**
-* **monotonically increasing**
-* foundation for **future replication & MVCC**
+Versioning is per-key and monotonically increasing, providing a foundation for concurrency control.
 
 ---
 
-# Supported CLI Commands
+# CLI Interface
 
-Stage-1 exposes a **minimal terminal interface**.
+FluxDB exposes a terminal interface for direct interaction.
 
 ## SET
 
@@ -96,9 +107,9 @@ SET nums [1,2,3]
 
 Behavior:
 
-* WAL append → fsync → memory apply → event dispatch
-* Version increments per mutation
-* Invalid JSON is rejected
+- WAL append -> fsync -> memory apply -> event dispatch
+- Version increments per mutation
+- Invalid JSON is rejected
 
 ---
 
@@ -114,7 +125,7 @@ Returns the latest stored document.
 
 ```
 GET user
-→ Document { value: {"name":"vaibhav","age":21}, version: 1 }
+-> Document { value: {"name":"vaibhav","age":21}, version: 1 }
 ```
 
 ---
@@ -125,18 +136,7 @@ GET user
 DELETE <key>
 ```
 
-Removes the key via a **versioned tombstone event**.
-
-Equivalent internal form:
-
-```
-new = null
-```
-
-Ensures:
-
-* deterministic replay
-* historical correctness in WAL
+Removes the key via a versioned tombstone event.
 
 ---
 
@@ -146,10 +146,10 @@ Ensures:
 PATCH <key> <json_delta>
 ```
 
-Performs a **recursive JSON merge**:
+Performs a recursive JSON merge:
 
-* object fields merged
-* non-objects overwritten
+- object fields merged
+- non-objects overwritten
 
 **Example**
 
@@ -172,18 +172,15 @@ Result:
 CHECKPOINT
 ```
 
-Creates an **atomic snapshot** of:
-
-* full in-memory state
-* current WAL offset
+Creates an atomic snapshot of the full in-memory state and current WAL offset.
 
 Protocol:
 
 ```
-write temp → fsync → atomic rename → fsync directory
+write temp -> fsync -> atomic rename -> fsync directory
 ```
 
-Guarantees **crash-safe persistence**.
+Guarantees crash-safe persistence.
 
 ---
 
@@ -197,155 +194,122 @@ Gracefully terminates the CLI.
 
 ---
 
-# Storage Architecture
+# Benchmarks
 
-FluxDB Stage-1 uses **log-structured storage with checkpoints**.
+FluxDB performance metrics for in-process and network operations.
+
+## In-Process Benchmarks
+
+Results obtained using `cargo run --bin bench -- --writes 10000 --reads 10000 --concurrency 100`:
+
+| Operation | Throughput (ops/sec) | P50 Latency | P95 Latency | P99 Latency |
+| --------- | -------------------- | ----------- | ----------- | ----------- |
+| SET       | 23,148.62            | 3.76ms      | 8.81ms      | 17.25ms     |
+| GET       | 210,310.86           | 481.21us    | 608.96us    | 731.94us    |
+
+## Network Benchmarks
+
+Results obtained using `cargo run --bin bench_network -- --writes 10000 --reads 10000 --concurrency 100`:
+
+| Operation | Throughput (ops/sec) | P50 Latency | P95 Latency | P99 Latency |
+| --------- | -------------------- | ----------- | ----------- | ----------- |
+| SET       | 17,550.45            | 4.57ms      | 16.51ms     | 17.79ms     |
+| GET       | 88,301.05            | 1.04ms      | 1.94ms      | 2.51ms      |
+
+---
+
+# How to Run Benchmarks
+
+### In-Process Benchmark
+
+```bash
+cargo run --bin bench -- --writes 10000 --reads 10000 --concurrency 100
+```
+
+### Network Benchmark
+
+1. Start the server:
+
+```bash
+cargo run --bin server
+```
+
+2. In another terminal, run the benchmark:
+
+```bash
+cargo run --bin bench_network -- --writes 10000 --reads 10000 --concurrency 100
+```
+
+---
+
+# Storage System
+
+FluxDB uses log-structured storage with checkpoints.
 
 ## Write Path
 
 ```
 Event
- → WAL append
- → fsync
- → apply to memory
- → reactive dispatch
+ -> WAL append
+ -> fsync
+ -> apply to memory
+ -> reactive dispatch
 ```
 
 ## Recovery Path
 
 ```
 Load snapshot
- → replay WAL suffix
- → rebuild deterministic state
+ -> replay WAL suffix
+ -> rebuild deterministic state
 ```
-
-Recovery is:
-
-* **redo-only**
-* **silent**
-* **deterministic**
 
 ---
 
 # Reactive Subsystem
 
-Each key maintains:
-
-```
-multiple independent subscribers
-```
-
-Design:
-
-```
-key → Vec<bounded channels>
-```
+Each key maintains multiple independent subscribers using bounded channels.
 
 Backpressure handling:
 
-* non-blocking dispatch (`try_send`)
-* closed channel → removed
-* full buffer → slow subscriber evicted
+- non-blocking dispatch (try_send)
+- closed channel -> removed
+- full buffer -> slow subscriber evicted
 
 Guarantee:
 
-> **Subscribers never block database writes.**
-
----
-
-# What Stage-1 Does NOT Include
-
-To preserve focus, Stage-1 intentionally excludes:
-
-* networking / TCP server
-* multi-process clients
-* concurrency control
-* async runtime integration
-* indexing
-* transactions / MVCC
-* replication / Raft
-* sharding
-* distributed queries
-
-All of these belong to **later stages**.
+> Subscribers never block database writes.
 
 ---
 
 # Running FluxDB
 
-```
+### Direct CLI (In-Process)
+
+Run the database with an integrated terminal interface:
+
+```bash
 cargo run
 ```
 
-You will see:
+### TCP Server and Client
 
-```
-Simple DB CLI. Commands: SET key json | GET key | DELETE key | PATCH key json | CHECKPOINT | EXIT
-```
+1. Start the FluxDB server:
 
-Enter commands interactively.
-
----
-
-# Example Session
-
-```
-SET x {"y":"red"}
-GET x
-PATCH x {"z":"pink"}
-GET x
-CHECKPOINT
-EXIT
+```bash
+cargo run --bin server
 ```
 
-After restart:
+2. Connect via the interactive TCP shell:
 
-```
-GET x
-→ state restored from snapshot + WAL replay
-```
-
-This validates **durability and recovery correctness**.
-
----
-
-# Engineering Significance of Stage-1
-
-Completing Stage-1 means the system now has:
-
-* **real crash safety**
-* **deterministic state machine**
-* **bounded reactive delivery**
-* **atomic persistence protocol**
-
-This crosses the boundary from:
-
-```
-toy CRUD project
+```bash
+cargo run --bin client -- shell
 ```
 
-to:
+3. Run a single command via TCP:
 
-```
-foundational storage engine core
-```
-
----
-
-# Next Stage
-
-Stage-2 introduces:
-
-* async runtime shell
-* concurrent clients
-* serialized command queue
-* WAL fsync batching
-* background snapshotting
-
-Preparing FluxDB for:
-
-```
-Stage-3 → Raft replication
+```bash
+cargo run --bin client -- set mykey '{"status": "online"}'
 ```
 
 ---
