@@ -217,6 +217,7 @@ Results obtained using `cargo run --bin bench -- --writes 10000 --reads 10000 --
 | --------- | -------------------- | ----------- | ----------- | ----------- |
 | SET       | 23,148.62            | 3.76ms      | 8.81ms      | 17.25ms     |
 | GET       | 210,310.86           | 481.21us    | 608.96us    | 731.94us    |
+| MIXED     | 14,184.41            | 3.92ms      | 16.62ms     | 300.09ms    |
 
 ## Network Benchmarks
 
@@ -226,6 +227,7 @@ Results obtained using `cargo run --bin bench_network -- --writes 10000 --reads 
 | --------- | -------------------- | ----------- | ----------- | ----------- |
 | SET       | 17,550.45            | 4.57ms      | 16.51ms     | 17.79ms     |
 | GET       | 88,301.05            | 1.04ms      | 1.94ms      | 2.51ms      |
+| MIXED     | 22,248.19            | 4.22ms      | 10.85ms     | 21.23ms     |
 
 ---
 
@@ -234,7 +236,11 @@ Results obtained using `cargo run --bin bench_network -- --writes 10000 --reads 
 ### In-Process Benchmark
 
 ```bash
+# Standard GET/SET
 cargo run --bin bench -- --writes 10000 --reads 10000 --concurrency 100
+
+# Mixed Workload (SET/GET/PATCH/DEL)
+cargo run --bin bench -- --mixed --writes 10000 --concurrency 100
 ```
 
 ### Network Benchmark
@@ -248,7 +254,11 @@ cargo run --bin server
 2. In another terminal, run the benchmark:
 
 ```bash
+# Standard GET/SET
 cargo run --bin bench_network -- --writes 10000 --reads 10000 --concurrency 100
+
+# Mixed Workload (SET/GET/PATCH/DEL)
+cargo run --bin bench_network -- --mixed --writes 10000 --concurrency 100
 ```
 
 ---
