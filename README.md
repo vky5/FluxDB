@@ -335,6 +335,34 @@ cargo run --bin client -- set mykey '{"status": "online"}'
 
 ---
 
+# Running the Real-time Demo
+
+To run the web demo and see real-time updates:
+
+1. **Start the FluxDB server** (TCP backend):
+   ```bash
+   cargo run --bin server
+   ```
+   This starts the database on `127.0.0.1:7000`.
+
+2. **Start the WebSocket bridge server**:
+   ```bash
+   cd demo
+   npm install   # Only needed once
+   node bridge-server.js
+   ```
+   This starts the bridge on `ws://localhost:8080`.
+
+3. **Serve the frontend web page**:
+   ```bash
+   npx http-server -p 3000
+   ```
+   Then open your browser at [http://localhost:3000](http://localhost:3000).
+
+For detailed demo instructions, see [demo/README.md](demo/README.md).
+
+---
+
 # License
 
 Educational / experimental project.

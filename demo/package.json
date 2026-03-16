@@ -1,0 +1,16 @@
+{
+  "name": "fluxdb-demo",
+  "version": "1.0.0",
+  "description": "Real-time demo application for FluxDB showing automatic updates",
+  "main": "bridge-server.js",
+  "scripts": {
+    "start": "node bridge-server.js",
+    "serve": "npx http-server -p 3000"
+  },
+  "dependencies": {
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}

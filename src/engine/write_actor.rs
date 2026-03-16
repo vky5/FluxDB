@@ -41,21 +41,23 @@ pub async fn write_actor(
 
     // serialized execution loop (database actor)
     loop {
+
+        // the drain phase 9o
         // 1. Wait for at least one command OR a tick
         tokio::select! {
-            res = rx.recv() => {
+            res = rx.recv() => { // recv blocks until a message is received
                 match res {
                     Some(cmd) => handle_write_command(&mut db, &mut pending, cmd).await,
                     None => break, // Channel closed, exit actor
                 }
             }
-            _ = tick.tick() => {
+            _ = tick.tick() => { // a safety mechanism, if there are no writes for 5ms, we will fsync anyway (in future if we implmenet length based fsync batching)
                 // tick is just a heartbeat for idle writes
             }
         }
 
         // 2. Opportunistically drain all currently available commands
-        while let Ok(cmd) = rx.try_recv() {
+        while let Ok(cmd) = rx.try_recv() { // try_recv is non-blocking and drains all messages quickly (using this directly and only this will consume 100 percent CPU)
             handle_write_command(&mut db, &mut pending, cmd).await;
         }
 

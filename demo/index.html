@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FluxDB Real-time Interface</title>
+    <!-- Lucide Icons via CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+      :root {
+        /* Faultlab/Tailwind OKLCH equivalent colors */
+        --background: oklch(0.145 0 0); /* #1e1e1e */
+        --foreground: oklch(0.985 0 0); /* #f8f8f8 */
+        --card: oklch(0.125 0 0);
+        --card-foreground: oklch(0.985 0 0);
+        --border: oklch(0.269 0 0); /* #404040 */
+        --muted: oklch(0.200 0 0); 
+        --muted-foreground: oklch(0.708 0 0); /* #a3a3a3 */
+        --primary: oklch(0.985 0 0); /* White */
+        --primary-foreground: oklch(0.205 0 0); /* Dark text on white bg */
+        --destructive: oklch(0.5 0.15 25);
+        
+        --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      }
+      
+      * { box-sizing: border-box; }
+      
+      body {
+        font-family: var(--font-sans);
+        background: var(--background);
+        color: var(--foreground);
+        margin: 0;
+        padding: 0;
+        height: 100vh;
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+      
+      .app-layout {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      
+      /* Top Navbar */
+      .navbar {
+        height: 64px;
+        flex-shrink: 0;
+        border-bottom: 1px solid var(--border);
+        background: var(--background);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 2rem;
+        z-index: 20;
+      }
+      
+      .nav-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-size: 1.25rem;
+        font-weight: 500;
+        letter-spacing: -0.025em;
+      }
+      
+      .nav-brand i { color: var(--foreground); opacity: 0.9; }
+      
+      .nav-meta {
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+      }
+      
+      .cluster-label {
+        font-size: 0.875rem;
+        color: var(--muted-foreground);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      
+      .status-badge {
+        font-size: 0.75rem;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: rgba(16, 185, 129, 0.1); 
+        color: rgb(52, 211, 153); 
+        border: 1px solid rgba(16, 185, 129, 0.2);
+        padding: 0.35rem 0.75rem;
+        border-radius: 9999px;
+        display: flex;
+        align-items: center;
+        transition: all 0.3s ease;
+      }
+      
+      .status-badge.disconnected {
+        background: rgba(239, 68, 68, 0.1);
+        color: #ef4444;
+        border-color: rgba(239, 68, 68, 0.2);
+      }
+      
+      .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        background: currentColor;
+        margin-right: 0.5rem;
+      }
+      
+      /* 3-Column Main Area */
+      .main-workspace {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+      }
+      
+      /* COL 1: Operations */
+      .col-ops {
+        width: 340px;
+        flex-shrink: 0;
+        border-right: 1px solid var(--border);
+        background: var(--card);
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+      }
+      
+      /* COL 2: Inspector */
+      .col-inspector {
+        flex: 1;
+        background: var(--background);
+        display: flex;
+        flex-direction: column;
+        min-width: 400px;
+      }
+      
+      /* COL 3: Logs */
+      .col-logs {
+        width: 380px;
+        flex-shrink: 0;
+        border-left: 1px solid var(--border);
+        background: var(--card);
+        display: flex;
+        flex-direction: column;
+      }
+      
+      /* Common Section Headers */
+      .section-header {
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: rgba(0,0,0,0.1);
+      }
+      
+      .section-title {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        color: var(--muted-foreground);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      
+      /* COL 1 Content (Ops) */
+      .ops-content {
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+      }
+      
+      .form-group { margin-bottom: 1rem; }
+      .form-label {
+        font-size: 0.75rem;
+        color: var(--muted-foreground);
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        display: block;
+        text-transform: uppercase;
+      }
+      
+      .input-field {
+        width: 100%;
+        background: var(--background);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 0.625rem 0.75rem;
+        font-size: 0.875rem;
+        font-family: var(--font-mono);
+        color: var(--foreground);
+        outline: none;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .input-field:focus {
+        border-color: rgba(255, 255, 255, 0.4);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+      }
+      
+      textarea.input-field {
+        min-height: 120px;
+        resize: vertical;
+        line-height: 1.5;
+      }
+      
+      .btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.625rem 1rem;
+        border-radius: var(--radius);
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: all 0.2s;
+      }
+      
+      .btn-primary { background: var(--primary); color: var(--primary-foreground); }
+      .btn-primary:hover { opacity: 0.9; }
+      
+      .btn-outline { background: var(--background); border-color: var(--border); color: var(--foreground); }
+      .btn-outline:hover { background: rgba(255, 255, 255, 0.05); }
+      
+      .btn-danger-outline { background: var(--background); border-color: rgba(239, 68, 68, 0.3); color: #ef4444; }
+      .btn-danger-outline:hover { background: rgba(239, 68, 68, 0.1); }
+      
+      .btn-icon { padding: 0.375rem; background: transparent; color: var(--muted-foreground); border-radius: var(--radius); border: none; cursor: pointer; }
+      .btn-icon:hover { color: var(--foreground); background: rgba(255, 255, 255, 0.1); }
+      
+      .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+      
+      .watch-list { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+      .watch-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--background);
+        border: 1px solid var(--border);
+        padding: 0.5rem 0.75rem;
+        border-radius: var(--radius);
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        color: var(--foreground);
+      }
+      .watch-item button {
+        background: none; border: none; color: var(--muted-foreground); cursor: pointer; padding: 0;
+      }
+      .watch-item button:hover { color: #ef4444; }
+      
+      /* COL 2 Content (Inspector) */
+      .inspector-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 2rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      
+      .inspector-content::-webkit-scrollbar { display: none; }
+      .inspector-content { -ms-overflow-style: none; scrollbar-width: none; }
+      
+      .data-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        transition: border-color 0.3s, background-color 0.3s;
+      }
+      
+      .data-card.flash {
+        background: rgba(99, 102, 241, 0.1);
+        border-color: rgba(99, 102, 241, 0.4);
+      }
+      
+      .data-card-header {
+        padding: 0.75rem 1rem;
+        background: rgba(0,0,0,0.2);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      
+      .data-key {
+        font-family: var(--font-mono);
+        font-size: 0.875rem;
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      
+      .data-key i { color: var(--muted-foreground); width: 14px; height: 14px; }
+      
+      .data-version {
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        background: var(--background);
+        color: var(--muted-foreground);
+        padding: 0.15rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+      }
+      
+      .data-body {
+        padding: 1rem;
+        font-family: var(--font-mono);
+        font-size: 0.8125rem;
+        color: var(--muted-foreground);
+        white-space: pre-wrap;
+        line-height: 1.6;
+        overflow-x: auto;
+      }
+      
+      /* JSON Syntax Highlighting Colors */
+      .json-string { color: oklch(0.75 0.1 150); } /* Green-ish */
+      .json-number { color: oklch(0.7 0.15 30); } /* Orange-ish */
+      .json-boolean { color: oklch(0.6 0.15 280); } /* Blue-ish */
+      .json-null { color: oklch(0.6 0 0); }
+      .json-key { color: oklch(0.85 0 0); font-weight: 500; }
+      
+      .empty-state {
+        margin: auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted-foreground);
+        text-align: center;
+        max-width: 300px;
+        gap: 1rem;
+      }
+      
+      /* COL 3 Content (Logs) */
+      .logs-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .logs-content::-webkit-scrollbar { display: none; }
+      .logs-content { -ms-overflow-style: none; scrollbar-width: none; }
+      
+      .log-entry {
+        padding: 0.75rem;
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--border);
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        animation: slideIn 0.2s ease-out;
+      }
+      
+      @keyframes slideIn {
+        from { opacity: 0; transform: translateX(10px); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      
+      .log-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 0.5rem;
+        gap: 0.5rem;
+      }
+      
+      .log-time { color: var(--muted-foreground); font-size: 0.65rem; }
+      
+      .log-tag {
+        font-weight: 600; 
+        border-radius: 4px; 
+        padding: 0.125rem 0.375rem; 
+        font-size: 0.65rem;
+        text-transform: uppercase;
+      }
+      .log-tag.info { background: rgba(255, 255, 255, 0.1); color: var(--foreground); }
+      .log-tag.success { background: rgba(16, 185, 129, 0.15); color: rgb(52, 211, 153); }
+      .log-tag.error { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+      
+      .log-msg { color: var(--foreground); font-weight: 500; flex: 1; word-break: break-all; }
+      
+      .log-diff { 
+        margin-top: 0.5rem;
+        padding-top: 0.5rem;
+        border-top: 1px dashed rgba(255,255,255,0.1);
+        color: var(--muted-foreground); 
+        word-break: break-all;
+        font-size: 0.7rem;
+        line-height: 1.5;
+      }
+      
+      .diff-old { text-decoration: line-through; color: #ef4444; opacity: 0.8; }
+      .diff-arrow { margin: 0 0.5rem; color: var(--muted-foreground); }
+      .diff-new { color: rgb(52, 211, 153); }
+
+    </style>
+</head>
+<body>
+
+    <div class="app-layout">
+        
+        <!-- Navbar -->
+        <nav class="navbar">
+            <div class="nav-brand">
+                <i data-lucide="database" style="width: 24px; height: 24px;"></i>
+                FluxDB Workspace
+            </div>
+            <div class="nav-meta">
+                <div class="cluster-label">
+                    <i data-lucide="network" style="width: 16px; height: 16px;"></i>
+                    Interacting with local cluster
+                </div>
+                <div class="status-badge" id="statusBadge">
+                    <span class="status-dot connected" id="statusIndicator"></span>
+                    <span id="statusText">Connected</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Workspace -->
+        <div class="main-workspace">
+            
+            <!-- Column 1: Operations -->
+            <div class="col-ops">
+                <div class="section-header">
+                    <div class="section-title">
+                        <i data-lucide="terminal-square" style="width: 16px; height: 16px;"></i>
+                        Action Panel
+                    </div>
+                </div>
+                
+                <div class="ops-content">
+                    
+                    <!-- Write / Query -->
+                    <div>
+                        <div class="form-group">
+                            <label class="form-label">Query Key</label>
+                            <input type="text" id="opKey" class="input-field" placeholder="e.g. system_config" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Payload (JSON)</label>
+                            <textarea id="opValue" class="input-field" placeholder='{"status": "online", "workers": 4}'></textarea>
+                            <div style="text-align: right; margin-top: 0.25rem;">
+                                <button class="btn-icon" style="font-size: 0.65rem; padding: 0;" onclick="formatPayload()">Format JSON</button>
+                            </div>
+                        </div>
+                        
+                        <div class="grid-2" style="margin-bottom: 0.5rem;">
+                            <button class="btn btn-outline" onclick="fluxGet()">
+                                <i data-lucide="download" style="width: 14px; height: 14px;"></i> Get
+                            </button>
+                            <button class="btn btn-primary" onclick="fluxSet()">
+                                <i data-lucide="upload" style="width: 14px; height: 14px;"></i> Set
+                            </button>
+                        </div>
+                        <div class="grid-2">
+                            <button class="btn btn-outline" onclick="fluxPatch()">
+                                <i data-lucide="file-edit" style="width: 14px; height: 14px;"></i> Patch
+                            </button>
+                            <button class="btn btn-danger-outline" onclick="fluxDelete()">
+                                <i data-lucide="trash" style="width: 14px; height: 14px;"></i> Delete
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Subscriptions -->
+                    <div style="border-top: 1px solid var(--border); padding-top: 1.5rem;">
+                        <label class="form-label mb-2">Active Subscriptions</label>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <input type="text" id="subKey" class="input-field" placeholder="Key to watch..." style="flex: 1;">
+                            <button class="btn btn-outline" style="padding: 0 0.75rem;" onclick="fluxSubscribe()">
+                                <i data-lucide="plus" style="width: 16px; height: 16px;"></i>
+                            </button>
+                        </div>
+                        
+                        <div class="watch-list" id="watchList">
+                            <!-- Items injected here -->
+                            <div style="color: var(--muted-foreground); font-size: 0.75rem; text-align: center; padding: 1rem 0;">No active subscriptions.</div>
+                        </div>
+                    </div>
+                    
+                </div>
+            </div>
+            
+            <!-- Column 2: Memory Inspector -->
+            <div class="col-inspector">
+                <div class="section-header">
+                    <div class="section-title">
+                        <i data-lucide="cpu" style="width: 16px; height: 16px;"></i>
+                        Live Memory Inspector
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--muted-foreground); font-family: var(--font-mono);" id="inspectorCount">
+                        0 Keys Tracked
+                    </div>
+                </div>
+                
+                <div class="inspector-content" id="inspectorContent">
+                    <div class="empty-state">
+                        <i data-lucide="server" style="width: 48px; height: 48px; opacity: 0.3;"></i>
+                        <div>
+                            <div style="font-weight: 500; color: var(--foreground); margin-bottom: 0.25rem;">Memory is empty</div>
+                            <div style="font-size: 0.8rem;">Query a key or create a subscription to visualize the live JSON structure.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Column 3: Event Log -->
+            <div class="col-logs">
+                <div class="section-header">
+                    <div class="section-title">
+                        <i data-lucide="activity" style="width: 16px; height: 16px;"></i>
+                        Activity Stream
+                    </div>
+                    <button class="btn-icon" onclick="document.getElementById('logContent').innerHTML = ''" title="Clear Stream">
+                        <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                    </button>
+                </div>
+                
+                <div class="logs-content" id="logContent">
+                    <!-- Logs injected here -->
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        let ws = null;
+        const stateCache = new Map(); // key -> { value, version }
+        const activeSubs = new Set(); // keys we are subscribed to
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // --- Network & Protocol ---
+
+        function connect() {
+            ws = new WebSocket('ws://localhost:8080');
+
+            ws.onopen = () => {
+                updateNetworkUI(true);
+                log('SYS', 'WebSocket bridge connected', null, 'success');
+                // Resubscribe if reconnecting
+                activeSubs.forEach(key => {
+                    ws.send(JSON.stringify({ type: 'subscribe', key }));
+                    setTimeout(() => ws.send(JSON.stringify({ type: 'get', key })), 50);
+                });
+                renderWatchList();
+            };
+
+            ws.onclose = () => {
+                updateNetworkUI(false);
+                log('SYS', 'Connection lost. Reconnecting...', null, 'error');
+                setTimeout(connect, 2000);
+            };
+
+            ws.onerror = () => { /* Handled by close */ };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleIncoming(msg);
+                } catch (e) {
+                    log('ERR', 'Parse Error: ' + e.message, null, 'error');
+                }
+            };
+        }
+
+        function handleIncoming(msg) {
+            switch (msg.type) {
+                case 'event': 
+                    handleFluxEvent(msg.data); 
+                    break;
+                case 'get_response': 
+                    if (msg.data.doc && msg.data.doc.value !== undefined) {
+                        const { value, version } = msg.data.doc;
+                        stateCache.set(msg.key, { value, version });
+                        updateInspector(msg.key);
+                        log('GET', `[${msg.key}] v${version}`, null, 'info');
+                    } else {
+                        log('GET', `[${msg.key}] Not Found`, null, 'error');
+                    }
+                    break;
+                case 'set_response':
+                    log('OP', `Set dispatched: [${msg.key}]`);
+                    forceFetch(msg.key);
+                    break;
+                case 'patch_response':
+                    log('OP', `Patch dispatched: [${msg.key}]`);
+                    forceFetch(msg.key);
+                    break;
+                case 'delete_response':
+                    log('OP', `Delete dispatched: [${msg.key}]`);
+                    // Note: actual cache drop happens on the subscription event or explicitly below if not subscribed
+                    if (!activeSubs.has(msg.key)) {
+                        stateCache.delete(msg.key);
+                        renderInspector();
+                    }
+                    break;
+                case 'subscribe_response':
+                    if (msg.data.kind === 'subscribed') {
+                        log('SUB', `Watching [${msg.key}]`, null, 'success');
+                    }
+                    break;
+                case 'error':
+                    log('ERR', msg.message, null, 'error');
+                    break;
+            }
+        }
+
+        function handleFluxEvent(fluxMsg) {
+            // New formats: { kind: 'value', doc: { value, version } }
+            //              { kind: 'event', event: { key, old, new, version } }
+            // Legacy formats: { kind: 'put'|'patch', key, value }, { kind: 'del', key }
+
+            if (fluxMsg.kind === 'value' && fluxMsg.doc) {
+                // Initial subscript state broadcast
+                const key = fluxMsg.key; // The bridge currently includes the key top-level if we modify it, or we rely on 'new' logic below.
+                // Note: if our bridge doesn't send 'key' in 'value' kind, it's problematic. 
+                // Let's assume bridge is sending { kind: 'value', key: '...', doc: {...} } OR we rely on initial GET.
+                if (fluxMsg.key) {
+                    stateCache.set(fluxMsg.key, { value: fluxMsg.doc.value, version: fluxMsg.doc.version || 0 });
+                    updateInspector(fluxMsg.key);
+                }
+            }
+            else if (fluxMsg.kind === 'event' && fluxMsg.event) {
+                const { key, old, new: newVal, version } = fluxMsg.event;
+                
+                if (newVal === null || newVal === undefined) {
+                    // Deleted
+                    stateCache.delete(key);
+                    renderInspector();
+                    log('DEL', `[${key}] v${version}`, `Dropped. Last state: ${JSON.stringify(old)}`, 'error');
+                } else {
+                    // Updated / Created
+                    stateCache.set(key, { value: newVal, version });
+                    updateInspector(key);
+                    
+                    const diffHtml = (old !== undefined) 
+                        ? `<span class="diff-old">${escapeHtml(JSON.stringify(old))}</span><span class="diff-arrow">???</span><span class="diff-new">${escapeHtml(JSON.stringify(newVal))}</span>`
+                        : `<span class="diff-new">${escapeHtml(JSON.stringify(newVal))}</span>`;
+                        
+                    log('SYNC', `[${key}] v${version}`, diffHtml, 'success', true);
+                }
+            } 
+            else if (fluxMsg.kind === 'put' || fluxMsg.kind === 'patch') {
+                // Legacy fallback support
+                const { key, value } = fluxMsg;
+                stateCache.set(key, { value, version: '?' });
+                updateInspector(key);
+                log('SYNC', `[${key}]`, escapeHtml(JSON.stringify(value)), 'info', true);
+            }
+            else if (fluxMsg.kind === 'delete') {
+                const { key } = fluxMsg;
+                stateCache.delete(key);
+                renderInspector();
+                log('DEL', `[${key}] legacy drop`, null, 'error');
+            }
+        }
+
+        // --- Commands ---
+
+        function fluxGet() {
+            const key = document.getElementById('opKey').value.trim();
+            if (!key) return log('ERR', 'Key required to Get', null, 'error');
+            ws.send(JSON.stringify({ type: 'get', key }));
+        }
+
+        function fluxSet() {
+            const key = document.getElementById('opKey').value.trim();
+            const val = document.getElementById('opValue').value.trim();
+            if (!key || !val) return log('ERR', 'Key and JSON Payload required', null, 'error');
+            try { 
+                const j = JSON.parse(val);
+                ws.send(JSON.stringify({ type: 'set', key, value: j })); 
+            } catch(e) { log('ERR', 'Invalid JSON syntax', null, 'error'); }
+        }
+
+        function fluxPatch() {
+            const key = document.getElementById('opKey').value.trim();
+            const val = document.getElementById('opValue').value.trim();
+            if (!key || !val) return log('ERR', 'Key and JSON Payload required', null, 'error');
+            try { 
+                const j = JSON.parse(val);
+                ws.send(JSON.stringify({ type: 'patch', key, delta: j })); 
+            } catch(e) { log('ERR', 'Invalid JSON syntax', null, 'error'); }
+        }
+        
+        function fluxDelete() {
+            const key = document.getElementById('opKey').value.trim();
+            if (!key) return log('ERR', 'Key required to Delete', null, 'error');
+            ws.send(JSON.stringify({ type: 'delete', key }));
+        }
+
+        function fluxSubscribe() {
+            const key = document.getElementById('subKey').value.trim();
+            if (!key) return;
+            if (activeSubs.has(key)) return;
+            
+            activeSubs.add(key);
+            renderWatchList();
+            
+            ws.send(JSON.stringify({ type: 'subscribe', key }));
+            forceFetch(key); // Ensure we get initial state
+            
+            document.getElementById('subKey').value = '';
+        }
+        
+        function fluxUnsubscribe(key) {
+            activeSubs.delete(key);
+            renderWatchList();
+            // Server bridge doesn't explicitly support unsubscribe yet, but we stop polling/tracking UI side.
+            log('SYS', `Stopped tracking [${key}]`, null, 'info');
+            // We keep it in inspector until explicitly removed, or we could remove it.
+        }
+
+        function forceFetch(key) {
+            setTimeout(() => ws.send(JSON.stringify({ type: 'get', key })), 50);
+        }
+
+        function formatPayload() {
+            const val = document.getElementById('opValue');
+            if(!val.value.trim()) return;
+            try {
+                const j = JSON.parse(val.value);
+                val.value = JSON.stringify(j, null, 2);
+            } catch(e) { /* ignore */ }
+        }
+
+        // --- UI Renderers ---
+
+        function updateNetworkUI(connected) {
+            const badge = document.getElementById('statusBadge');
+            const dot = document.getElementById('statusIndicator');
+            const text = document.getElementById('statusText');
+            
+            if (connected) {
+                badge.className = 'status-badge';
+                dot.className = 'status-dot connected';
+                text.textContent = 'Connected';
+            } else {
+                badge.className = 'status-badge disconnected';
+                dot.className = 'status-dot disconnected';
+                text.textContent = 'Disconnected';
+            }
+        }
+
+        // Advanced JSON Syntax highlighting
+        function syntaxHighlight(jsonObj) {
+            let json = JSON.stringify(jsonObj, null, 2);
+            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                let cls = 'json-number';
+                if (/^"/.test(match)) {
+                    if (/:$/.test(match)) { cls = 'json-key'; }
+                    else { cls = 'json-string'; }
+                } else if (/true|false/.test(match)) { cls = 'json-boolean'; }
+                else if (/null/.test(match)) { cls = 'json-null'; }
+                return '<span class="' + cls + '">' + match + '</span>';
+            });
+        }
+
+        function updateInspector(key) {
+            const cont = document.getElementById('inspectorContent');
+            const data = stateCache.get(key);
+            if (!data) return;
+
+            const cardId = `ds-${key.replace(/[^a-zA-Z0-9]/g, '-')}`;
+            let card = document.getElementById(cardId);
+            
+            if (!card) {
+                if(cont.querySelector('.empty-state')) cont.innerHTML = '';
+                card = document.createElement('div');
+                card.id = cardId;
+                card.className = 'data-card';
+                cont.insertBefore(card, cont.firstChild);
+            }
+            
+            card.innerHTML = `
+                <div class="data-card-header">
+                    <div class="data-key"><i data-lucide="braces"></i> ${escapeHtml(key)}</div>
+                    <div class="data-version">v${escapeHtml(String(data.version))}</div>
+                </div>
+                <div class="data-body">${syntaxHighlight(data.value)}</div>
+            `;
+            lucide.createIcons({ root: card });
+            
+            // Flash animation
+            card.classList.remove('flash');
+            void card.offsetWidth; // trigger reflow
+            card.classList.add('flash');
+            setTimeout(() => card.classList.remove('flash'), 500);
+
+            document.getElementById('inspectorCount').textContent = `${stateCache.size} Keys Tracked`;
+        }
+
+        function renderInspector() {
+            const cont = document.getElementById('inspectorContent');
+            document.getElementById('inspectorCount').textContent = `${stateCache.size} Keys Tracked`;
+            
+            if (stateCache.size === 0) {
+                cont.innerHTML = `
+                    <div class="empty-state">
+                        <i data-lucide="server" style="width: 48px; height: 48px; opacity: 0.3;"></i>
+                        <div>
+                            <div style="font-weight: 500; color: var(--foreground); margin-bottom: 0.25rem;">Memory is empty</div>
+                            <div style="font-size: 0.8rem;">Query a key or create a subscription to visualize the live JSON structure.</div>
+                        </div>
+                    </div>
+                `;
+                lucide.createIcons({ root: cont });
+                return;
+            }
+            
+            cont.innerHTML = '';
+            // Sort keys
+            const keys = Array.from(stateCache.keys()).sort();
+            for (const key of keys) {
+                const data = stateCache.get(key);
+                const card = document.createElement('div');
+                card.id = `ds-${key.replace(/[^a-zA-Z0-9]/g, '-')}`;
+                card.className = 'data-card';
+                card.innerHTML = `
+                    <div class="data-card-header">
+                        <div class="data-key"><i data-lucide="braces"></i> ${escapeHtml(key)}</div>
+                        <div class="data-version">v${escapeHtml(String(data.version))}</div>
+                    </div>
+                    <div class="data-body">${syntaxHighlight(data.value)}</div>
+                `;
+                cont.appendChild(card);
+            }
+            lucide.createIcons({ root: cont });
+        }
+        
+        function renderWatchList() {
+            const list = document.getElementById('watchList');
+            if (activeSubs.size === 0) {
+                list.innerHTML = '<div style="color: var(--muted-foreground); font-size: 0.75rem; text-align: center; padding: 1rem 0;">No active subscriptions.</div>';
+                return;
+            }
+            
+            list.innerHTML = '';
+            Array.from(activeSubs).sort().forEach(key => {
+                const item = document.createElement('div');
+                item.className = 'watch-item';
+                item.innerHTML = `
+                    <div><span style="color: var(--primary);">#</span> ${escapeHtml(key)}</div>
+                    <button onclick="fluxUnsubscribe('${escapeHtml(key)}')"><i data-lucide="x" style="width: 14px; height: 14px;"></i></button>
+                `;
+                list.appendChild(item);
+            });
+            lucide.createIcons({ root: list });
+        }
+
+        function log(tag, msg, diffHtml = null, tagClass = 'info', rawHtml = false) {
+            const logBox = document.getElementById('logContent');
+            const time = new Date().toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+            
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            let html = `
+                <div class="log-header">
+                    <span class="log-time">${time}</span>
+                    <span class="log-tag ${tagClass}">${escapeHtml(tag)}</span>
+                    <span class="log-msg">${escapeHtml(msg)}</span>
+                </div>
+            `;
+            
+            if (diffHtml) {
+                html += `<div class="log-diff">${rawHtml ? diffHtml : escapeHtml(diffHtml)}</div>`;
+            }
+            
+            entry.innerHTML = html;
+            logBox.insertBefore(entry, logBox.firstChild);
+            
+            // keep bounded
+            while (logBox.children.length > 200) {
+                logBox.removeChild(logBox.lastChild);
+            }
+        }
+
+        // Boot
+        connect();
+    </script>
+</body>
+</html>
